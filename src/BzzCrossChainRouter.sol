@@ -41,14 +41,15 @@ contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
     /// @dev ERC677 transfer and call function
     /// @param data the data to be used for determining which batch to topUp
     function onTokenTransfer(address, uint256, bytes memory data) external returns (bool) {
-        if (msg.sender == address(bzz)) {
-            if (data.length == 0) {
-                return false;
-            } else {
-                (bytes32 batchId, uint256 topupAmountPerChunk) = abi.decode(data, (bytes32, uint256));
-                postOffice.topUp(batchId, topupAmountPerChunk);
-            }
+        if (msg.sender != address(bzz)) {
+            return true;
         }
+
+        if (data.length == 0) {
+            return false;
+        }
+        
+        _topUp(data);
 
         return true;
     }
@@ -57,12 +58,19 @@ contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
     /// @param token the token address that has been sent
     /// @param data used to determine which batch is to be topped up and how
     function onTokenBridged(address token, uint256, bytes calldata data) external {
-        if (token == address(bzz)) {
-            if (data.length != 0) {
-                (bytes32 batchId, uint256 topupAmountPerChunk) = abi.decode(data, (bytes32, uint256));
-                postOffice.topUp(batchId, topupAmountPerChunk);
-            }
+        if (data.length != 0 && token == address(bzz)) {
+            _topUp(data);
         }
+    }
+
+    /// Top up a stamp batch
+    /// @dev intentionally use an internal function here instead of duplicating in callbacks
+    ///      knowingly that this will incur additional JUMP costs, but in most cases, these
+    ///      costs will be paid for by bridge validators.
+    /// @param data abi encoded calldata from the callback with batch id (bytes32) and amountPerChunk (uint256)
+    function _topUp(bytes memory data) internal {
+        (bytes32 batchId, uint256 topupAmountPerChunk) = abi.decode(data, (bytes32, uint256));
+        postOffice.topUp(batchId, topupAmountPerChunk);
     }
 
     /// Sweeper function for any tokens or eth accidentally sent to the contract
