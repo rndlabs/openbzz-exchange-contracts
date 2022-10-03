@@ -59,43 +59,39 @@ contract ExchangeTest is Test {
 
     function testFile() public {
         vm.prank(alice.addr);
-        vm.expectRevert("Ownable: caller is not the owner");
-        exchange.file(bytes32("fee"), 50);
+        vm.expectRevert("UNAUTHORIZED");
+        exchange.setFee(50);
 
         vm.startPrank(owner.addr);
 
         // file a fee change
-        exchange.file(bytes32("fee"), 50);
+        exchange.setFee(50);
         assertEq(exchange.fee(), 50);
 
         // file a value that is too high
         vm.expectRevert(bytes("fee/too-high"));
-        exchange.file(bytes32("fee"), 101);
+        exchange.setFee(101);
         assertEq(exchange.fee(), 50);
-
-        // file an invalid parameter
-        vm.expectRevert(bytes("what/invalid"));
-        exchange.file("what", 10092);
     }
 
     function testSweep() public {
         vm.prank(alice.addr);
-        vm.expectRevert("Ownable: caller is not the owner");
-        exchange.sweep(address(exchange), 1000);
+        vm.expectRevert("UNAUTHORIZED");
+        exchange.sweep(address(exchange), abi.encode(uint256(1000)));
 
         // give some eth to the exchange contract
         vm.deal(address(exchange), 1000 ether);
 
         vm.startPrank(owner.addr);
         // test sweeping eth
-        uint256 owner_balance = address(owner.addr).balance;
-        exchange.sweep(address(exchange), 1000);
-        assertEq(address(owner.addr).balance, owner_balance + 1000);
+        // uint256 owner_balance = address(owner.addr).balance;
+        // exchange.sweep(address(exchange), abi.encode(uint256(1000)));
+        // assertEq(address(owner.addr).balance, owner_balance + 1000);
 
         // test sweeping erc20 tokens
-        owner_balance = dai.balanceOf(owner.addr);
+        uint256 owner_balance = dai.balanceOf(owner.addr);
         uint256 exchange_balance = dai.balanceOf(address(exchange));
-        exchange.sweep(address(dai), exchange_balance);
+        exchange.sweep(address(dai), abi.encode(exchange_balance));
 
         assertEq(dai.balanceOf(owner.addr), owner_balance + exchange_balance);
         assertEq(dai.balanceOf(address(exchange)), 0);

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/interfaces/IERC20.sol";
+import "solmate/auth/Owned.sol";
+import "solmate/tokens/ERC20.sol";
+import "solmate/tokens/ERC721.sol";
+import "solmate/tokens/ERC1155.sol";
+import "solmate/utils/SafeTransferLib.sol";
+
 import "@openzeppelin/contracts/interfaces/IERC165.sol";
 import "@openzeppelin/contracts/interfaces/IERC721.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/interfaces/IERC1155.sol";
 
 /// @notice abbreviated dai token (permit only) function
 /// @dev refer https://raw.githubusercontent.com/makerdao/dss/master/src/dai.sol
@@ -41,13 +45,18 @@ interface ForeignBridge {
     function relayTokensAndCall(address token, address _receiver, uint256 _value, bytes memory _data) external;
 }
 
-contract Exchange is Ownable {
+contract Exchange is 
+    Owned, 
+    IERC165,
+    ERC721TokenReceiver,
+    ERC1155TokenReceiver
+{
     // maximum fee is hardcoded at 100 basis points (1%)
     uint256 public constant MAX_FEE = 100;
 
     // tokens that are processed in this exchange
-    IERC20 private dai;
-    IERC20 private bzz;
+    ERC20 private dai;
+    ERC20 private bzz;
 
     // the bonding curve we use for exchanging
     ICurve public bc;
@@ -55,18 +64,16 @@ contract Exchange is Ownable {
 
     uint256 public fee;
 
-    constructor(address owner, address _bc, address _bridge, uint256 _fee) {
+    constructor(address owner, address _bc, address _bridge, uint256 _fee) Owned(owner) {
         require(_fee <= MAX_FEE, "fee/too-high");
-        // handle access controls first
-        _transferOwnership(owner);
 
         // the bonding curve that we are going to use
         bc = ICurve(_bc);
         bridge = ForeignBridge(_bridge);
 
         // these are the tokens that we are exchanging
-        dai = IERC20(bc.collateralToken());
-        bzz = IERC20(bc.bondedToken());
+        dai = ERC20(bc.collateralToken());
+        bzz = ERC20(bc.bondedToken());
 
         /// @notice pre-approve the bonding ciurve for unlimited approval of the exchange's bzz and dai
         dai.approve(address(bc), type(uint256).max);
@@ -85,15 +92,10 @@ contract Exchange is Ownable {
     // administration functions (onlyOwner)
 
     /// Allow configuration of uint256 variables after contract deployment, respecting maximums.
-    /// @param what the parameter to set with file
-    /// @param _fee the uint256 value to set
-    function file(bytes32 what, uint256 _fee) external onlyOwner {
-        if (what == bytes32("fee")) {
-            require(_fee <= MAX_FEE, "fee/too-high");
-            fee = _fee;
-        } else {
-            revert("what/invalid");
-        }
+    /// @param _fee the fee to set for the exchange
+    function setFee(uint256 _fee) external onlyOwner {
+        require(_fee <= MAX_FEE, "fee/too-high");
+        fee = _fee;
     }
 
     // swap functions
@@ -175,19 +177,43 @@ contract Exchange is Ownable {
 
     /// Sweeper function for any tokens or eth accidentally sent to the contract
     /// @notice this function will send the tokens / eth only to the owner of the contract
-    /// @param selfOrToken the address of the token to sweep, or the address of this contract in the event of eth
-    /// @param idOrAmount the id of the token (EIP721) or the amount of token/eth to sweep
-    function sweep(address selfOrToken, uint256 idOrAmount) external onlyOwner {
-        if (selfOrToken == address(this)) {
-            Address.sendValue(payable(owner()), idOrAmount);
-        } else {
-            (bool success, bytes memory result) =
-                selfOrToken.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC721).interfaceId));
-            if (success && abi.decode(result, (bool))) {
-                IERC721(selfOrToken).safeTransferFrom(address(this), owner(), idOrAmount);
-            } else {
-                IERC20(selfOrToken).transfer(owner(), idOrAmount);
-            }
+    /// @param token the address of the token to sweep
+    /// @param cd calldata relative to the type of sweep operation
+    function sweep(address token, bytes calldata cd) external onlyOwner {
+        // 1. check if it is an ERC721 sweep request
+        (bool success, bytes memory result) =
+            token.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC721).interfaceId));
+
+        if (success && abi.decode(result, (bool))) {
+            IERC721(token).safeTransferFrom(address(this), owner, abi.decode(cd, (uint256)));
+            return;
         }
+
+        // 2. check if it is an ERC1155 sweep request
+        (success, result) =
+            token.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC1155).interfaceId));
+
+        if (success && abi.decode(result, (bool))) {
+            (uint256 id, uint256 amount, bytes memory data) = abi.decode(cd, (uint256, uint256, bytes));
+            IERC1155(token).safeTransferFrom(address(this), owner, id, amount, data);
+            return;
+        }
+
+        // 3. fallback to sweeping ERC20
+        ERC20(token).transfer(owner, abi.decode(cd, (uint256)));
+    }
+
+    /// fallback function for automatically sweeping native tokens to the owner
+    fallback() external payable {
+        SafeTransferLib.safeTransferETH(payable(owner), msg.value);
+    }
+
+    /// IERC165 (introspection) support
+    /// @param interfaceID the interface to check if this contract supports or not
+    /// @return bool true if the respective interface is supported, false if not
+    function supportsInterface(bytes4 interfaceID) external pure returns (bool) {
+        return interfaceID == 0x01ffc9a7 // ERC-165 support (i.e. `bytes4(keccak256('supportsInterface(bytes4)'))`).
+            || interfaceID == 0x150b7a02 // ERC-721 support (i.e. `bytes4(keccak256('onERC721Received(address,address,uint256,bytes)'))`).
+            || interfaceID == 0x4e2312e0; // ERC-1155 `ERC1155TokenReceiver` support (i.e. `bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)")) ^ bytes4(keccak256("onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)"))`).
     }
 }
