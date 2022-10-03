@@ -21,7 +21,6 @@ interface IERC20Receiver {
 
 /// @title router for bzz being sent from foreign bridge to home bridge
 contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
-
     // token address of bzz
     IERC20 private bzz;
 
@@ -41,11 +40,7 @@ contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
     /// ERC677 transfer callback function for use with honeyswap or similar
     /// @dev ERC677 transfer and call function
     /// @param data the data to be used for determining which batch to topUp
-    function onTokenTransfer(
-        address,
-        uint256,
-        bytes memory data
-    ) external returns (bool) {
+    function onTokenTransfer(address, uint256, bytes memory data) external returns (bool) {
         if (msg.sender == address(bzz)) {
             if (data.length == 0) {
                 return false;
@@ -54,7 +49,7 @@ contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
                 postOffice.topUp(batchId, topupAmountPerChunk);
             }
         }
-        
+
         return true;
     }
 
@@ -74,25 +69,14 @@ contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
     /// @notice this function will send the tokens / eth only to the owner of the contract
     /// @param selfOrToken the address of the token to sweep, or the address of this contract in the event of eth
     /// @param idOrAmount the id of the token (EIP721) or the amount of token/eth to sweep
-    function sweep(
-        address selfOrToken,
-        uint256 idOrAmount
-    ) external onlyOwner {
+    function sweep(address selfOrToken, uint256 idOrAmount) external onlyOwner {
         if (selfOrToken == address(this)) {
             Address.sendValue(payable(owner()), idOrAmount);
         } else {
-            (bool success, bytes memory result) = selfOrToken.call(
-                abi.encodeWithSelector(
-                    IERC165.supportsInterface.selector,
-                    type(IERC721).interfaceId
-                )
-            );
+            (bool success, bytes memory result) =
+                selfOrToken.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC721).interfaceId));
             if (success && abi.decode(result, (bool))) {
-                IERC721(selfOrToken).safeTransferFrom(
-                    address(this),
-                    owner(),
-                    idOrAmount
-                );
+                IERC721(selfOrToken).safeTransferFrom(address(this), owner(), idOrAmount);
             } else {
                 IERC20(selfOrToken).transfer(owner(), idOrAmount);
             }

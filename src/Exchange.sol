@@ -42,7 +42,6 @@ interface ForeignBridge {
 }
 
 contract Exchange is Ownable {
-
     // maximum fee is hardcoded at 100 basis points (1%)
     uint256 public constant MAX_FEE = 100;
 
@@ -109,20 +108,15 @@ contract Exchange is Ownable {
         uint256 collateralCost = bc.buyPrice(wad);
         require(collateralCost <= max_collateral_spend, "exchange/slippage");
 
-        // at this point should consider if the length of cd is not zero, in which case we 
+        // at this point should consider if the length of cd is not zero, in which case we
         // assume that there is a permit signature, and will execute such.
         if (permit.length > 0) {
             // we assume that there is a permit signature here, decode as such
-            (uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s) = abi.decode(permit, (uint256, uint256, uint8, bytes32, bytes32));
+            (uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s) =
+                abi.decode(permit, (uint256, uint256, uint8, bytes32, bytes32));
 
             /// @dev dai permit is not eip-2612.
-            DaiPermit(address(dai)).permit(
-                msg.sender,
-                address(this),
-                nonce,
-                expiry,
-                true,
-                v, r, s);
+            DaiPermit(address(dai)).permit(msg.sender, address(this), nonce, expiry, true, v, r, s);
         }
         // 2. transfer the dai from the user to this contract
         require(dai.transferFrom(msg.sender, address(this), collateralCost), "exchange/transfer-failed");
@@ -136,7 +130,7 @@ contract Exchange is Ownable {
             // use mintTo to save on a transfer
             bc.mintTo(wad, collateralCost, msg.sender);
         } else {
-            bc.mint(wad ,collateralCost);
+            bc.mint(wad, collateralCost);
             // there are two options here, depending on the calldata length
             // 1. if calldata is just an abi encoded address, then we send to an address on gnosis chain.
             //    this is handy if wanting to send direct to a bee node's wallet
@@ -157,7 +151,7 @@ contract Exchange is Ownable {
     /// @dev This function assumes that the contract has already been authorised to spend msg.sender's bzz
     /// @param wad the amount of bzz to sell to the bonding curve
     /// @param min_collateral_receive the minimum amount of collateral we should get for selling wad (dai)
-    function sell(uint256 wad ,uint256 min_collateral_receive) external {
+    function sell(uint256 wad, uint256 min_collateral_receive) external {
         // 1. calculate the reward for selling wad bzz and enforce slippage constraint
         uint256 collateralReward = bc.sellReward(wad);
         require(collateralReward >= min_collateral_receive, "exchange/slippage");
@@ -183,29 +177,17 @@ contract Exchange is Ownable {
     /// @notice this function will send the tokens / eth only to the owner of the contract
     /// @param selfOrToken the address of the token to sweep, or the address of this contract in the event of eth
     /// @param idOrAmount the id of the token (EIP721) or the amount of token/eth to sweep
-    function sweep(
-        address selfOrToken,
-        uint256 idOrAmount
-    ) external onlyOwner {
+    function sweep(address selfOrToken, uint256 idOrAmount) external onlyOwner {
         if (selfOrToken == address(this)) {
             Address.sendValue(payable(owner()), idOrAmount);
         } else {
-            (bool success, bytes memory result) = selfOrToken.call(
-                abi.encodeWithSelector(
-                    IERC165.supportsInterface.selector,
-                    type(IERC721).interfaceId
-                )
-            );
+            (bool success, bytes memory result) =
+                selfOrToken.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC721).interfaceId));
             if (success && abi.decode(result, (bool))) {
-                IERC721(selfOrToken).safeTransferFrom(
-                    address(this),
-                    owner(),
-                    idOrAmount
-                );
+                IERC721(selfOrToken).safeTransferFrom(address(this), owner(), idOrAmount);
             } else {
                 IERC20(selfOrToken).transfer(owner(), idOrAmount);
             }
         }
     }
-
 }

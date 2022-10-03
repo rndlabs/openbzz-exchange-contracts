@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.17;
 
-import { Test } from "../lib/forge-std/src/Test.sol";
-import { Exchange, ICurve, ForeignBridge, DaiPermit } from "../src/Exchange.sol";
-import { IERC20 } from "@openzeppelin/contracts/interfaces/IERC20.sol";
+import {Test} from "../lib/forge-std/src/Test.sol";
+import {Exchange, ICurve, ForeignBridge, DaiPermit} from "../src/Exchange.sol";
+import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 
 contract ExchangeTest is Test {
-
     struct TestAccount {
         address addr;
         uint256 key;
@@ -26,7 +25,6 @@ contract ExchangeTest is Test {
     // --- token contracts
     IERC20 dai;
     IERC20 bzz;
-
 
     function setUp() public {
         // setup test accounts
@@ -53,7 +51,7 @@ contract ExchangeTest is Test {
 
         // deploy sigutils
         sigUtils = new SigUtils(DaiPermit(address(dai)).DOMAIN_SEPARATOR());
-        
+
         // give alice 10000 eth
         vm.deal(address(alice.addr), 10000 ether);
         deal(address(dai), address(exchange), 10000e18);
@@ -144,18 +142,7 @@ contract ExchangeTest is Test {
         deal(address(dai), address(alice.addr), 10000 ether);
         dai.approve(address(exchange), type(uint256).max);
 
-        exchange.buy(
-            10 ether,
-            1000 ether,
-            "",
-            abi.encode(
-                alice.addr,
-                abi.encode(
-                    bytes32("test"),
-                    uint256(1)
-                )
-            )
-        );
+        exchange.buy(10 ether, 1000 ether, "", abi.encode(alice.addr, abi.encode(bytes32("test"), uint256(1))));
     }
 
     function testBuyPermit() public {
@@ -210,7 +197,7 @@ contract ExchangeTest is Test {
         deal(address(bzz), address(alice.addr), 1000 ether);
         vm.expectRevert(bytes("ERC20: transfer amount exceeds allowance"));
         exchange.sell(10 ether, 0 ether);
-        
+
         bzz.approve(address(exchange), type(uint256).max);
 
         uint256 pre_alice_balance_dai = dai.balanceOf(alice.addr);
@@ -253,37 +240,14 @@ contract SigUtils {
     }
 
     // computes the hash of a permit
-    function getStructHash(Permit memory _permit)
-        internal
-        pure
-        returns (bytes32)
-    {
-        return
-            keccak256(
-                abi.encode(
-                    PERMIT_TYPEHASH,
-                    _permit.holder,
-                    _permit.spender,
-                    _permit.nonce,
-                    _permit.expiry,
-                    _permit.allowed
-                )
-            );
+    function getStructHash(Permit memory _permit) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(PERMIT_TYPEHASH, _permit.holder, _permit.spender, _permit.nonce, _permit.expiry, _permit.allowed)
+        );
     }
 
     // computes the hash of the fully encoded EIP-712 message for the domain, which can be used to recover the signer
-    function getTypedDataHash(Permit memory _permit)
-        public
-        view
-        returns (bytes32)
-    {
-        return
-            keccak256(
-                abi.encodePacked(
-                    "\x19\x01",
-                    DOMAIN_SEPARATOR,
-                    getStructHash(_permit)
-                )
-            );
+    function getTypedDataHash(Permit memory _permit) public view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, getStructHash(_permit)));
     }
 }
