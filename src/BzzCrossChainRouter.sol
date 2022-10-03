@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/interfaces/IERC20.sol";
-import "@openzeppelin/contracts/interfaces/IERC165.sol";
+import "solmate/auth/Owned.sol";
+import "solmate/tokens/ERC20.sol";
+import "solmate/tokens/ERC721.sol";
+import "solmate/tokens/ERC1155.sol";
+import "solmate/utils/SafeTransferLib.sol";
+
 import "@openzeppelin/contracts/interfaces/IERC721.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/interfaces/IERC1155.sol";
+import "@openzeppelin/contracts/interfaces/IERC165.sol";
 
 interface PostageStamp {
     function topUp(bytes32 _batchId, uint256 _topupAmountPerChunk) external;
@@ -20,17 +24,15 @@ interface IERC20Receiver {
 }
 
 /// @title router for bzz being sent from foreign bridge to home bridge
-contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
+contract BzzCrossChainRouter is Owned, IERC165, ERC677Callback, IERC20Receiver, ERC721TokenReceiver, ERC1155TokenReceiver {
     // token address of bzz
-    IERC20 private bzz;
+    ERC20 private bzz;
 
     PostageStamp private postOffice;
 
-    constructor(address _owner, address _bzz, PostageStamp _postOffice) {
-        _transferOwnership(_owner);
-
+    constructor(address _owner, address _bzz, PostageStamp _postOffice) Owned(_owner) {
         // token configuration
-        bzz = IERC20(_bzz);
+        bzz = ERC20(_bzz);
         bzz.approve(address(_postOffice), type(uint256).max);
 
         // other contracts for the relay
@@ -75,19 +77,43 @@ contract BzzCrossChainRouter is Ownable, ERC677Callback, IERC20Receiver {
 
     /// Sweeper function for any tokens or eth accidentally sent to the contract
     /// @notice this function will send the tokens / eth only to the owner of the contract
-    /// @param selfOrToken the address of the token to sweep, or the address of this contract in the event of eth
-    /// @param idOrAmount the id of the token (EIP721) or the amount of token/eth to sweep
-    function sweep(address selfOrToken, uint256 idOrAmount) external onlyOwner {
-        if (selfOrToken == address(this)) {
-            Address.sendValue(payable(owner()), idOrAmount);
-        } else {
-            (bool success, bytes memory result) =
-                selfOrToken.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC721).interfaceId));
-            if (success && abi.decode(result, (bool))) {
-                IERC721(selfOrToken).safeTransferFrom(address(this), owner(), idOrAmount);
-            } else {
-                IERC20(selfOrToken).transfer(owner(), idOrAmount);
-            }
+    /// @param token the address of the token to sweep
+    /// @param cd calldata relative to the type of sweep operation
+    function sweep(address token, bytes calldata cd) external onlyOwner {
+        // 1. check if it is an ERC721 sweep request
+        (bool success, bytes memory result) =
+            token.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC721).interfaceId));
+
+        if (success && abi.decode(result, (bool))) {
+            IERC721(token).safeTransferFrom(address(this), owner, abi.decode(cd, (uint256)));
+            return;
         }
+        
+        // 2. check if it is an ERC1155 sweep request
+        (success, result) =
+            token.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC1155).interfaceId));
+
+        if (success && abi.decode(result, (bool))) {
+            (uint256 id, uint256 amount, bytes memory data) = abi.decode(cd, (uint256, uint256, bytes));
+            IERC1155(token).safeTransferFrom(address(this), owner, id, amount, data);
+            return;
+        }
+
+        // 3. fallback to sweeping ERC20
+        ERC20(token).transfer(owner, abi.decode(cd, (uint256)));
+    }
+
+    /// fallback function for automatically sweeping native tokens to the owner
+    fallback() external payable { 
+        SafeTransferLib.safeTransferETH(payable(owner), msg.value);
+    }
+
+    /// IERC165 (introspection) support
+    /// @param interfaceID the interface to check if this contract supports or not
+    /// @return bool true if the respective interface is supported, false if not
+    function supportsInterface(bytes4 interfaceID) external pure returns (bool) {
+      return  interfaceID == 0x01ffc9a7 ||    // ERC-165 support (i.e. `bytes4(keccak256('supportsInterface(bytes4)'))`).
+              interfaceID == 0x150b7a02 ||    // ERC-721 support (i.e. `bytes4(keccak256('onERC721Received(address,address,uint256,bytes)'))`).
+              interfaceID == 0x4e2312e0;      // ERC-1155 `ERC1155TokenReceiver` support (i.e. `bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)")) ^ bytes4(keccak256("onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)"))`).
     }
 }
