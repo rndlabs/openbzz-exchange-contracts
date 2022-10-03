@@ -24,7 +24,14 @@ interface IERC20Receiver {
 }
 
 /// @title router for bzz being sent from foreign bridge to home bridge
-contract BzzCrossChainRouter is Owned, IERC165, ERC677Callback, IERC20Receiver, ERC721TokenReceiver, ERC1155TokenReceiver {
+contract BzzCrossChainRouter is
+    Owned,
+    IERC165,
+    ERC677Callback,
+    IERC20Receiver,
+    ERC721TokenReceiver,
+    ERC1155TokenReceiver
+{
     // token address of bzz
     ERC20 private bzz;
 
@@ -50,7 +57,7 @@ contract BzzCrossChainRouter is Owned, IERC165, ERC677Callback, IERC20Receiver, 
         if (data.length == 0) {
             return false;
         }
-        
+
         _topUp(data);
 
         return true;
@@ -88,7 +95,7 @@ contract BzzCrossChainRouter is Owned, IERC165, ERC677Callback, IERC20Receiver, 
             IERC721(token).safeTransferFrom(address(this), owner, abi.decode(cd, (uint256)));
             return;
         }
-        
+
         // 2. check if it is an ERC1155 sweep request
         (success, result) =
             token.call(abi.encodeWithSelector(IERC165.supportsInterface.selector, type(IERC1155).interfaceId));
@@ -104,7 +111,7 @@ contract BzzCrossChainRouter is Owned, IERC165, ERC677Callback, IERC20Receiver, 
     }
 
     /// fallback function for automatically sweeping native tokens to the owner
-    fallback() external payable { 
+    fallback() external payable {
         SafeTransferLib.safeTransferETH(payable(owner), msg.value);
     }
 
@@ -112,8 +119,8 @@ contract BzzCrossChainRouter is Owned, IERC165, ERC677Callback, IERC20Receiver, 
     /// @param interfaceID the interface to check if this contract supports or not
     /// @return bool true if the respective interface is supported, false if not
     function supportsInterface(bytes4 interfaceID) external pure returns (bool) {
-      return  interfaceID == 0x01ffc9a7 ||    // ERC-165 support (i.e. `bytes4(keccak256('supportsInterface(bytes4)'))`).
-              interfaceID == 0x150b7a02 ||    // ERC-721 support (i.e. `bytes4(keccak256('onERC721Received(address,address,uint256,bytes)'))`).
-              interfaceID == 0x4e2312e0;      // ERC-1155 `ERC1155TokenReceiver` support (i.e. `bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)")) ^ bytes4(keccak256("onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)"))`).
+        return interfaceID == 0x01ffc9a7 // ERC-165 support (i.e. `bytes4(keccak256('supportsInterface(bytes4)'))`).
+            || interfaceID == 0x150b7a02 // ERC-721 support (i.e. `bytes4(keccak256('onERC721Received(address,address,uint256,bytes)'))`).
+            || interfaceID == 0x4e2312e0; // ERC-1155 `ERC1155TokenReceiver` support (i.e. `bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)")) ^ bytes4(keccak256("onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)"))`).
     }
 }
