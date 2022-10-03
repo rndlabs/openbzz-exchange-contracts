@@ -88,3 +88,12 @@ Depending on the `bridge_cd` parameter passed to the `buy` function, a user may:
 
 1. Purchase BZZ tokens and send them directly to an address on Gnosis Chain.
 2. Purchase BZZ tokens, send them to Gnosis Chain and directly top-up a stamp.
+
+### BZZ Cross Chain Router
+
+`BzzCrossChainRouter` is a small utility contract that resides on Gnosis Chain and is responsible for redirecting `BZZ`. This router will:
+
+1. Redirect `BZZ` that has been bridged, using the `onTokenBridged` callback from `HomeBridge`.
+2. Redirect `BZZ` that has been transferred, using the `onTokenTransfer` callback for `ERC677` transfers.
+
+No fees are deducted by this utility contract.
