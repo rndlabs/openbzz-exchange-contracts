@@ -173,5 +173,4 @@ contract Exchange is Owned {
     function sweep(ERC20 token, uint256 wad) external onlyOwner {
         token.safeTransfer(owner, wad);
     }
-
 }
