@@ -49,8 +49,8 @@ Swap is deployed on the following networks:
 
 | Network | Name | Contract |
 | ------- | ---- | -------- |
-| Mainnet | Exchange | [0x1330391b40741a06abaeb5484b55e2458d3097b1](https://etherscan.io/address/0x1330391b40741a06abaeb5484b55e2458d3097b1) |
-| Gnosis  | BzzCrossChainRouter | [0xb6aC157Ab9c4c3F2A8CbE0856a5603e730B00116](https://blockscout.com/xdai/mainnet/address/0xb6aC157Ab9c4c3F2A8CbE0856a5603e730B00116)| 
+| Mainnet | Exchange | [0xEd469d6aa0658b71B9dE75c2fe401924FCf0534d](https://etherscan.io/address/0xEd469d6aa0658b71B9dE75c2fe401924FCf0534d) |
+| Gnosis  | BzzCrossChainRouter | [0x17491dc69269c8cd8aB84FE647fc1E7A817504eE](https://blockscout.com/xdai/mainnet/address/0x17491dc69269c8cd8aB84FE647fc1E7A817504eE)| 
 
 ## Overview
 
