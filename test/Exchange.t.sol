@@ -57,7 +57,7 @@ contract ExchangeTest is Test {
         deal(address(dai), address(exchange), 10000e18);
     }
 
-    function testFile() public {
+    function testSetFee() public {
         vm.prank(alice.addr);
         vm.expectRevert("UNAUTHORIZED");
         exchange.setFee(50);
