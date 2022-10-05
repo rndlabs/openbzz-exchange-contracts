@@ -3,7 +3,7 @@ pragma solidity ^0.8.17;
 
 import {Test} from "../lib/forge-std/src/Test.sol";
 import {Exchange, ICurve, ForeignBridge, DaiPermit} from "../src/Exchange.sol";
-import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
+import "solmate/tokens/ERC20.sol";
 
 contract ExchangeTest is Test {
     struct TestAccount {
@@ -23,8 +23,8 @@ contract ExchangeTest is Test {
     ForeignBridge bridge;
 
     // --- token contracts
-    IERC20 dai;
-    IERC20 bzz;
+    ERC20 dai;
+    ERC20 bzz;
 
     function setUp() public {
         // setup test accounts
@@ -46,8 +46,8 @@ contract ExchangeTest is Test {
         bridge = ForeignBridge(exchange.bridge());
 
         // setup the tokens
-        dai = IERC20(bc.collateralToken());
-        bzz = IERC20(bc.bondedToken());
+        dai = ERC20(bc.collateralToken());
+        bzz = ERC20(bc.bondedToken());
 
         // deploy sigutils
         sigUtils = new SigUtils(DaiPermit(address(dai)).DOMAIN_SEPARATOR());
@@ -77,37 +77,36 @@ contract ExchangeTest is Test {
     function testSweep() public {
         vm.prank(alice.addr);
         vm.expectRevert("UNAUTHORIZED");
-        exchange.sweep(address(exchange), abi.encode(uint256(1000)));
-
-        // give some eth to the exchange contract
-        vm.deal(address(exchange), 1000 ether);
+        exchange.sweep(dai, uint256(1000));
 
         vm.startPrank(owner.addr);
-        // test sweeping eth
-        // uint256 owner_balance = address(owner.addr).balance;
-        // exchange.sweep(address(exchange), abi.encode(uint256(1000)));
-        // assertEq(address(owner.addr).balance, owner_balance + 1000);
 
         // test sweeping erc20 tokens
         uint256 owner_balance = dai.balanceOf(owner.addr);
         uint256 exchange_balance = dai.balanceOf(address(exchange));
-        exchange.sweep(address(dai), abi.encode(exchange_balance));
+        exchange.sweep(dai, exchange_balance);
 
         assertEq(dai.balanceOf(owner.addr), owner_balance + exchange_balance);
         assertEq(dai.balanceOf(address(exchange)), 0);
+    }
+
+    function testRejectEth() public {
+        vm.prank(alice.addr);
+        vm.expectRevert();
+        payable(address(exchange)).send(1 ether);
     }
 
     function testBuyNonPermit() public {
         vm.startPrank(alice.addr);
 
         // test balance requirements
-        vm.expectRevert(bytes("Dai/insufficient-balance"));
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
         exchange.buy(10 ether, 1000 ether, "", "");
 
         deal(address(dai), address(alice.addr), 10000e18);
 
         // test allowance requirements
-        vm.expectRevert(bytes("Dai/insufficient-allowance"));
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
         exchange.buy(10 ether, 1000 ether, "", "");
 
         dai.approve(address(exchange), type(uint256).max);
@@ -145,13 +144,13 @@ contract ExchangeTest is Test {
         vm.startPrank(alice.addr);
 
         // test balance requirements
-        vm.expectRevert(bytes("Dai/insufficient-balance"));
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
         exchange.buy(10 ether, 1000 ether, "", "");
 
         deal(address(dai), address(alice.addr), 10000e18);
 
         // test allowance requirements
-        vm.expectRevert(bytes("Dai/insufficient-allowance"));
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
         exchange.buy(10 ether, 1000 ether, "", "");
 
         uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
@@ -187,11 +186,11 @@ contract ExchangeTest is Test {
     function testSell() public {
         // test approvals and balance checking
         vm.startPrank(alice.addr);
-        vm.expectRevert(bytes("ERC20: transfer amount exceeds balance"));
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
         exchange.sell(10 ether, 0 ether);
 
         deal(address(bzz), address(alice.addr), 1000 ether);
-        vm.expectRevert(bytes("ERC20: transfer amount exceeds allowance"));
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
         exchange.sell(10 ether, 0 ether);
 
         bzz.approve(address(exchange), type(uint256).max);
