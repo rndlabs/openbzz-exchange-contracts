@@ -46,12 +46,12 @@ contract Exchange is Owned {
     uint256 public constant MAX_FEE = 100;
 
     // tokens that are processed in this exchange
-    ERC20 private dai;
-    ERC20 private bzz;
+    ERC20 private immutable dai;
+    ERC20 private immutable bzz;
 
     // the bonding curve we use for exchanging
-    ICurve public bc;
-    ForeignBridge public bridge;
+    ICurve public immutable bc;
+    ForeignBridge public immutable bridge;
 
     uint256 public fee;
 
@@ -140,7 +140,7 @@ contract Exchange is Owned {
         }
     }
 
-    /// Sell BZZ to the bonding curve in return for rewards
+    /// Sell BZZ to the bonding curve in return for rewards (DAI)
     /// @dev This function assumes that the contract has already been authorised to spend msg.sender's bzz
     /// @param wad the amount of bzz to sell to the bonding curve
     /// @param min_collateral_receive the minimum amount of collateral we should get for selling wad (dai)

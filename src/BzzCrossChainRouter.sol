@@ -21,7 +21,9 @@ interface IERC20Receiver {
 contract BzzCrossChainRouter is Owned, ERC677Callback, IERC20Receiver {
     using SafeTransferLib for ERC20;
 
-    PostageStamp private postOffice;
+    // token addresses and postoffice
+    ERC20 private immutable bzz;
+    PostageStamp public immutable postOffice;
 
     constructor(address _owner, address _bzz, PostageStamp _postOffice) Owned(_owner) {
         // token configuration
