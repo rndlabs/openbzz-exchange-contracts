@@ -10,3 +10,6 @@
 [submodule "lib/centre-tokens"]
 	path = lib/centre-tokens
 	url = https://github.com/centrehq/centre-tokens
+[submodule "lib/dss"]
+	path = lib/dss
+	url = https://github.com/makerdao/dss
