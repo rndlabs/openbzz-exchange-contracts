@@ -7,3 +7,6 @@
 [submodule "lib/dss-psm"]
 	path = lib/dss-psm
 	url = https://github.com/makerdao/dss-psm
+[submodule "lib/centre-tokens"]
+	path = lib/centre-tokens
+	url = https://github.com/centrehq/centre-tokens
