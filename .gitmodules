@@ -4,12 +4,6 @@
 [submodule "lib/solmate"]
 	path = lib/solmate
 	url = https://github.com/transmissions11/solmate
-[submodule "lib/dss-psm"]
-	path = lib/dss-psm
-	url = https://github.com/makerdao/dss-psm
 [submodule "lib/centre-tokens"]
 	path = lib/centre-tokens
 	url = https://github.com/centrehq/centre-tokens
-[submodule "lib/dss"]
-	path = lib/dss
-	url = https://github.com/makerdao/dss
