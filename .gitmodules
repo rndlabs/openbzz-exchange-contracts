@@ -10,3 +10,6 @@
 [submodule "lib/dss-interfaces"]
 	path = lib/dss-interfaces
 	url = https://github.com/makerdao/dss-interfaces
+[submodule "lib/v3-core"]
+	path = lib/v3-core
+	url = https://github.com/Uniswap/v3-core
