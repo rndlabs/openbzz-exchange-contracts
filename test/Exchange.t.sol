@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.17;
 
-import {Test} from "../lib/forge-std/src/Test.sol";
-import {Exchange, ICurve, ForeignBridge, DaiPermit} from "../src/Exchange.sol";
+
+import "makerdao/dss/DaiAbstract.sol";
 import "solmate/tokens/ERC20.sol";
+
+import {Test} from "../lib/forge-std/src/Test.sol";
+import {Exchange} from "../src/Exchange.sol";
+import { IForeignBridge } from "../src/interfaces/IForeignBridge.sol";
+import { IBondingCurve } from "../src/interfaces/IBondingCurve.sol";
 
 contract ExchangeTest is Test {
     struct TestAccount {
@@ -19,8 +24,8 @@ contract ExchangeTest is Test {
     TestAccount owner;
 
     // --- main contracts
-    ICurve bc;
-    ForeignBridge bridge;
+    IBondingCurve bc;
+    IForeignBridge bridge;
 
     // --- token contracts
     ERC20 dai;
@@ -36,21 +41,25 @@ contract ExchangeTest is Test {
         // deploy exchange
         exchange = new Exchange(
             owner.addr,
-            0x4F32Ab778e85C4aD0CEad54f8f82F5Ee74d46904,
-            0x88ad09518695c6c3712AC10a214bE5109a655671, 
-            100
+            0x4F32Ab778e85C4aD0CEad54f8f82F5Ee74d46904, // bonding curve
+            0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7, // lp curve fi
+            0x5777d92f208679DB4b9778590Fa3CAB3aC9e2168, // lp uni3 dai usdc
+            0x48DA0965ab2d2cbf1C17C09cFB5Cbe67Ad5B1406, // lp uni3 dai usdt
+            0x89B78CfA322F6C5dE0aBcEecab66Aee45393cC5A, // lp dai psm
+            0x88ad09518695c6c3712AC10a214bE5109a655671, // bridge
+            100 // max fee
         );
 
         // setup the bonding curve and bridge
-        bc = ICurve(exchange.bc());
-        bridge = ForeignBridge(exchange.bridge());
+        bc = IBondingCurve(exchange.bc());
+        bridge = IForeignBridge(exchange.bridge());
 
         // setup the tokens
         dai = ERC20(bc.collateralToken());
         bzz = ERC20(bc.bondedToken());
 
         // deploy sigutils
-        sigUtils = new SigUtils(DaiPermit(address(dai)).DOMAIN_SEPARATOR());
+        sigUtils = new SigUtils(DaiAbstract(address(dai)).DOMAIN_SEPARATOR());
 
         // give alice 10000 eth
         vm.deal(address(alice.addr), 10000 ether);
@@ -101,13 +110,13 @@ contract ExchangeTest is Test {
 
         // test balance requirements
         vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(10 ether, 1000 ether, "", "");
+        exchange.buy1(10 ether, 1000 ether, "", "");
 
         deal(address(dai), address(alice.addr), 10000e18);
 
         // test allowance requirements
         vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(10 ether, 1000 ether, "", "");
+        exchange.buy1(10 ether, 1000 ether, "", "");
 
         dai.approve(address(exchange), type(uint256).max);
 
@@ -115,7 +124,7 @@ contract ExchangeTest is Test {
         uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
         uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
 
-        exchange.buy(10 ether, 1000 ether, "", "");
+        exchange.buy1(10 ether, 1000 ether, "", "");
 
         /// @dev assert that alice gets the net amount and the exchange gets the fees
         assertEq(bzz.balanceOf(alice.addr), pre_alice_balance + net(10 ether));
@@ -128,7 +137,7 @@ contract ExchangeTest is Test {
         deal(address(dai), address(alice.addr), 10000 ether);
         dai.approve(address(exchange), type(uint256).max);
 
-        exchange.buy(10 ether, 1000 ether, "", abi.encode(alice.addr));
+        exchange.buy1(10 ether, 1000 ether, "", abi.encode(alice.addr));
     }
 
     function testBuyAndBridgeToBatch() public {
@@ -137,7 +146,7 @@ contract ExchangeTest is Test {
         deal(address(dai), address(alice.addr), 10000 ether);
         dai.approve(address(exchange), type(uint256).max);
 
-        exchange.buy(10 ether, 1000 ether, "", abi.encode(alice.addr, abi.encode(bytes32("test"), uint256(1))));
+        exchange.buy1(10 ether, 1000 ether, "", abi.encode(alice.addr, abi.encode(bytes32("test"), uint256(1))));
     }
 
     function testBuyPermit() public {
@@ -145,13 +154,13 @@ contract ExchangeTest is Test {
 
         // test balance requirements
         vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(10 ether, 1000 ether, "", "");
+        exchange.buy1(10 ether, 1000 ether, "", "");
 
         deal(address(dai), address(alice.addr), 10000e18);
 
         // test allowance requirements
         vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(10 ether, 1000 ether, "", "");
+        exchange.buy1(10 ether, 1000 ether, "", "");
 
         uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
         uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
@@ -170,13 +179,13 @@ contract ExchangeTest is Test {
 
         vm.expectRevert(bytes("Dai/invalid-permit"));
         bytes memory permit_bytes = abi.encode(uint256(0), type(uint256).max, v, s, r);
-        exchange.buy(10 ether, 1000 ether, permit_bytes, "");
+        exchange.buy1(10 ether, 1000 ether, permit_bytes, "");
 
         permit_bytes = abi.encode(uint256(0), type(uint256).max, v, r, s);
-        exchange.buy(10 ether, 1000 ether, permit_bytes, "");
+        exchange.buy1(10 ether, 1000 ether, permit_bytes, "");
 
         assertEq(dai.allowance(alice.addr, address(exchange)), type(uint256).max);
-        assertEq(DaiPermit(address(dai)).nonces(alice.addr), 1);
+        assertEq(DaiAbstract(address(dai)).nonces(alice.addr), 1);
 
         /// @dev assert that alice gets the net amount and the exchange gets the fees
         assertEq(bzz.balanceOf(alice.addr), pre_alice_balance + net(10 ether));
