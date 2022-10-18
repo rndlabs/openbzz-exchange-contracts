@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.17;
 
-
 import "makerdao/dss/DaiAbstract.sol";
 import "solmate/tokens/ERC20.sol";
 
 import {Test} from "../lib/forge-std/src/Test.sol";
-import {Exchange} from "../src/Exchange.sol";
-import { IForeignBridge } from "../src/interfaces/IForeignBridge.sol";
-import { IBondingCurve } from "../src/interfaces/IBondingCurve.sol";
+import {Exchange, BuyParams, SellParams, Stablecoin, LiquidityProvider} from "../src/Exchange.sol";
+import {IForeignBridge} from "../src/interfaces/IForeignBridge.sol";
+import {IBondingCurve} from "../src/interfaces/IBondingCurve.sol";
 
 contract ExchangeTest is Test {
     struct TestAccount {
@@ -17,7 +16,8 @@ contract ExchangeTest is Test {
     }
 
     Exchange public exchange;
-    SigUtils public sigUtils;
+    SigUtilsDAI public sigUtilsDai;
+    SigUtilsEIP2612 public sigUtilsEip2612;
 
     // --- constants
     TestAccount alice;
@@ -29,6 +29,8 @@ contract ExchangeTest is Test {
 
     // --- token contracts
     ERC20 dai;
+    ERC20 usdc;
+    ERC20 usdt;
     ERC20 bzz;
 
     function setUp() public {
@@ -57,9 +59,12 @@ contract ExchangeTest is Test {
         // setup the tokens
         dai = ERC20(bc.collateralToken());
         bzz = ERC20(bc.bondedToken());
+        usdc = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
+        usdt = ERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
 
         // deploy sigutils
-        sigUtils = new SigUtils(DaiAbstract(address(dai)).DOMAIN_SEPARATOR());
+        sigUtilsDai = new SigUtilsDAI(DaiAbstract(address(dai)).DOMAIN_SEPARATOR());
+        sigUtilsUsdc = new SigUtilsEIP2612(usdc.DOMAIN_SEPARATOR());
 
         // give alice 10000 eth
         vm.deal(address(alice.addr), 10000 ether);
@@ -225,7 +230,62 @@ contract ExchangeTest is Test {
     }
 }
 
-contract SigUtils {
+contract SigUtilsEIP2612 {
+    bytes32 internal DOMAIN_SEPARATOR;
+
+    constructor(bytes32 _DOMAIN_SEPARATOR) {
+        DOMAIN_SEPARATOR = _DOMAIN_SEPARATOR;
+    }
+
+    // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    bytes32 public constant PERMIT_TYPEHASH =
+        0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
+
+    struct Permit {
+        address owner;
+        address spender;
+        uint256 value;
+        uint256 nonce;
+        uint256 deadline;
+    }
+
+    // computes the hash of a permit
+    function getStructHash(Permit memory _permit)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return
+            keccak256(
+                abi.encode(
+                    PERMIT_TYPEHASH,
+                    _permit.owner,
+                    _permit.spender,
+                    _permit.value,
+                    _permit.nonce,
+                    _permit.deadline
+                )
+            );
+    }
+
+    // computes the hash of the fully encoded EIP-712 message for the domain, which can be used to recover the signer
+    function getTypedDataHash(Permit memory _permit)
+        public
+        view
+        returns (bytes32)
+    {
+        return
+            keccak256(
+                abi.encodePacked(
+                    "\x19\x01",
+                    DOMAIN_SEPARATOR,
+                    getStructHash(_permit)
+                )
+            );
+    }
+}
+
+contract SigUtilsDAI {
     bytes32 internal DOMAIN_SEPARATOR;
 
     constructor(bytes32 _DOMAIN_SEPARATOR) {
