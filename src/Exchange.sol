@@ -59,6 +59,9 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
     // maximum fee is hardcoded at 100 basis points (1%)
     uint256 public constant MAX_FEE = 100;
 
+    /// @dev the conversion rate from 6 decimals to 18 decimals (USDC/USDT to DAI)
+    uint256 internal constant TO_DAI = 1000000000000;
+
     /// @notice Uniswap V3 pool constants from TickMath
     /// @dev The minimum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MIN_TICK)
     uint160 internal constant MIN_SQRT_RATIO = 4295128739;
@@ -180,103 +183,148 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
 
     // --- EXCHANGE ---
 
-    /// This exchange allows for exchanging a stablecoin for bzz, and vice versa.
-    /// The following routes are supported:
-    /// 1)      dai <--> bzz via the bonding curve
-    /// 2a)     usdc <--> dai <--> bzz via curve fi 3pool and bonding curve
-    /// 2b)     usdc <--> dai <--> bzz via uniswap v3 pool and bonding curve
-    /// 2c)     usdc <--> dai <--> bzz via dai psm and bonding curve
-    /// 3a)     usdt <--> dai <--> bzz via curve fi 3pool and bonding curve
-    /// 3b)     usdt <--> dai <--> bzz via uniswap v3 pool and bonding curve
+    /// The exchange allows for buying / selling BZZ from/to stablecoins
+    ///
+    /// BZZ market: Bonding Curve (BZZ <--> DAI)
+    /// Stablecoin markets: 
+    /// a. Curve.fi 3pool (DAI <--> USDC/USDT)
+    /// b. Uniswap V3 (DAI <--> USDC/USDT)
+    /// c. DAI PSM (DAI <--> USDC)
 
-    /// @notice this function will exchange the input stablecoin token for bzz
-    function buy(BuyParams calldata _buyParams) public returns (uint256) {
-        // 1. If the input token is not dai, we need to exchange it for dai first
-    }
-
-    /// Route 1: dai <--> bzz via the bonding curve
-    /// @param wad the amount of bzz to buy from the bonding curve
-    /// @param max_collateral_spend the maximum amount of collateral to be used when buying (dai)
-    /// @param permit the permit for dai to enable single transaction purchase
-    /// @param bridge_cd calldata for bridging to gnosis chain
-    function buy1(uint256 wad, uint256 max_collateral_spend, bytes calldata permit, bytes calldata bridge_cd) public {
-        // 1. calculate the price to buy wad bzz and enforce slippage constraint
-        uint256 collateralCost = bc.buyPrice(wad);
-        require(collateralCost <= max_collateral_spend, "exchange/slippage");
-
-        // at this point should consider if the length of cd is not zero, in which case we
-        // assume that there is a permit signature, and will execute such.
-        if (permit.length > 0) {
-            // we assume that there is a permit signature here, decode as such
-            (uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s) =
-                abi.decode(permit, (uint256, uint256, uint8, bytes32, bytes32));
-
-            /// @dev dai permit is not eip-2612.
-            DaiAbstract(address(dai)).permit(msg.sender, address(this), nonce, expiry, true, v, r, s);
+    /// Buy BZZ with a stablecoin
+    /// @param _buyParams the parameters for the buy transaction
+    /// @return totalCost in stablecoin of the transaction
+    function buy(BuyParams calldata _buyParams) external returns (uint256 totalCost) {
+        // 1. calculate the price to buy wad amount of bzz, then calculate fee
+        uint256 collateralCost = bc.buyPrice(_buyParams.bzzAmount);         // dai cost
+        unchecked {
+            uint256 feeCost = collateralCost * fee / 10000;                 // dai fee
+            totalCost = collateralCost + feeCost;                           // dai total
         }
-        // 2. transfer the dai from the user to this contract
-        _move(dai, msg.sender, address(this), collateralCost);
 
-        // 3. deduct our fees
-        (wad, collateralCost) = (net(wad), net(collateralCost));
+        // 2. enforce slippage constraints
+        /// @dev Allow for 2bps slippage for Uniswap V3 and Curve.fi
+        require(_buyParams.maxStablecoinAmount * (_buyParams.inputCoin == Stablecoin.DAI ? 1 : TO_DAI) > 
+            (uint8(_buyParams.lp) <= 1 ? // logic shortcut to check if lp is 0 or 1, ie. NONE or DAI_PSM
+                totalCost : 
+                totalCost * 10002 / 10000  // allow 2bps of slippage for Uniswap V3 and Curve.fi
+            ), "exchange/slippage"
+        );
 
-        // 4. mint and send logic
-        if (bridge_cd.length == 0) {
-            // no bridging data, therefore we are to just send to the user here on ethereum mainnet
-            // use mintTo to save on a transfer
-            bc.mintTo(wad, collateralCost, msg.sender);
-        } else {
-            bc.mint(wad, collateralCost);
-            // there are two options here, depending on the calldata length
-            // 1. if calldata is just an abi encoded address, then we send to an address on gnosis chain.
-            //    this is handy if wanting to send direct to a bee node's wallet
-            // 2. if calldata is longer than just an abi encoded address, we will relay tokens and provide
-            //    callback data (allows for flexibility when sending to contracts on gnosis chain)
-            if (bridge_cd.length == 32) {
-                // relay direct to a wallet
-                address dest = abi.decode(bridge_cd, (address));
-                bridge.relayTokens(address(bzz), dest, wad);
+        bytes memory permitData;
+        bytes memory bridgeData;
+
+        // 3. extract any optional data
+        if (_buyParams.options != 0) {
+            if (_buyParams.options == 1) {
+                // the user has given us a permit signature for the stablecoin token only
+                permitData = _buyParams.data;
+                _permit(_buyParams.inputCoin, permitData);
+            } else if (_buyParams.options == 2) {
+                // the user has specified some data for dealing with the bridge
+                bridgeData = _buyParams.data;
             } else {
-                (address dest, bytes memory cd) = abi.decode(bridge_cd, (address, bytes));
-                bridge.relayTokensAndCall(address(bzz), dest, wad, cd);
+                // if we get here, we will assume that this is a permit signature and bridge data
+                (permitData, bridgeData) = abi.decode(_buyParams.data, (bytes, bytes));
+                _permit(_buyParams.inputCoin, permitData);
             }
         }
+
+        // 4. if input coin is not dai, then swap to dai (moves to this contract)
+        //    else if input coin is dai, then transfer dai to this contract
+        if (uint8(Stablecoin.DAI) < uint8(_buyParams.inputCoin)) {
+            _daiRouter(
+                _buyParams.lp,
+                (_buyParams.lp != LiquidityProvider.DAI_PSM ?   // if not using dai psm, we need 2bps slippage
+                    totalCost * 10002 / 10000 / TO_DAI :        // 2bps slippage
+                    totalCost / TO_DAI                          // otherwise 0bps slippage
+                ),
+                true,
+                _buyParams.inputCoin == Stablecoin.USDC ? address(usdc) : address(usdt)
+            );
+        } else {
+            _move(dai, msg.sender, address(this), totalCost);
+        }
+
+        // 5. buy bzz from the bonding curve and send to the user
+        if (_buyParams.options < 2) {
+            // no bridging data, therefore we are to just send to the user here on ethereum mainnet
+            // use mintTo to save on a transfer
+            bc.mintTo(_buyParams.bzzAmount, collateralCost, msg.sender);
+            return totalCost;
+        }
+
+        // 6. if we are here, then we are to bridge the bzz to the other chain
+        bc.mint(_buyParams.bzzAmount, collateralCost);
+        // there are two options here, depending on the calldata length
+        // a. if calldata is just an abi encoded address, then we send to an address on gnosis chain.
+        //    this is handy if wanting to send direct to a bee node's wallet
+        // b. if calldata is longer than just an abi encoded address, we will relay tokens and provide
+        //    callback data (allows for flexibility when sending to contracts on gnosis chain)
+        if (bridgeData.length == 32) {
+            // relay direct to a wallet
+            bridge.relayTokens(
+                address(bzz),
+                abi.decode(bridgeData, (address)),
+                _buyParams.bzzAmount
+            );
+        } else {
+            (address dest, bytes memory cd) = abi.decode(bridgeData, (address, bytes));
+            bridge.relayTokensAndCall(address(bzz), dest, _buyParams.bzzAmount, cd);
+        }
     }
 
-    /// Sell BZZ to the bonding curve in return for rewards (DAI)
-    /// @dev This function assumes that the contract has already been authorised to spend msg.sender's bzz
-    /// @param wad the amount of bzz to sell to the bonding curve
-    /// @param min_collateral_receive the minimum amount of collateral we should get for selling wad (dai)
-    function sell(uint256 wad, uint256 min_collateral_receive) public {
+    /// Sell BZZ for a stablecoin
+    /// @param _sellParams the parameters for the sell transaction
+    /// @return amount in stablecoin of the transaction
+    function sell(SellParams calldata _sellParams) external returns (uint256 amount) {
         // 1. calculate the reward for selling wad bzz and enforce slippage constraint
-        uint256 collateralReward = bc.sellReward(wad);
-        require(collateralReward >= min_collateral_receive, "exchange/slippage");
+        uint256 collateralReward = bc.sellReward(_sellParams.bzzAmount);        // dai reward
+        uint256 feeReward = collateralReward * fee / 10000;                     // dai fee
+        amount = collateralReward - feeReward;                                  // dai amount
 
-        // 2. transfer the bzz from the user to this contract
-        _move(bzz, msg.sender, address(this), wad);
+        // 2. enforce slippage constraints
+        /// @dev Allow for 2bps slippage for Uniswap V3 and Curve.fi
+        require(_sellParams.minStablecoinAmount * (_sellParams.outputCoin == Stablecoin.DAI ? 1 : TO_DAI) < 
+            (uint8(_sellParams.lp) <= 1 ?   // logic shortcut to check if lp is 0 or 1, ie. NONE or DAI_PSM
+                amount : 
+                amount * 9998 / 10000       // allow 2bps of slippage for Uniswap V3 and Curve.fi
+            ), "exchange/slippage"
+        );
 
-        // 3. redeem
-        bc.redeem(wad, collateralReward);
+        // 3. transfer bzz from the user to this contract
+        _move(bzz, msg.sender, address(this), _sellParams.bzzAmount);
 
-        // 4. send the amount received to msg.sender after deducting any fee
-        ERC20(address(dai)).safeTransfer(msg.sender, net(collateralReward));
-    }
+        // 4. redeem bzz from the bonding curve
+        bc.redeem(_sellParams.bzzAmount, collateralReward);
 
-    /// Calculates the *net* amount that should be paid to msg.sender
-    /// @param gross the gross amount in wei for consideration
-    /// @return uint256 the gross amount less fees (fees specified in bps)
-    function net(uint256 gross) internal view returns (uint256) {
-        return (10000 - fee) * gross / 10000;
+        // 5. if output coin is not dai, then swap to output coin (moves to user)
+        //    else if output coin is dai, then transfer dai to user
+        if (uint8(Stablecoin.DAI) < uint8(_sellParams.outputCoin)) {
+            _daiRouter(
+                _sellParams.lp,
+                (_sellParams.lp != LiquidityProvider.DAI_PSM ?  // if not using dai psm, we need 2bps slippage
+                    amount * 9998 / 10000 / TO_DAI :            // 2bps slippage
+                    amount / TO_DAI                             // otherwise 0bps slippage
+                ),
+                true,
+                _sellParams.outputCoin == Stablecoin.USDC ? address(usdc) : address(usdt)
+            );
+        } else {
+            _move(dai, address(this), msg.sender, amount);
+        }
+
     }
 
     // --- helpers
 
     /// Route from dai <--> usdc/usdt using various liquidity pools
     /// @param lp the liquidity pool to use
-    /// @param wad the amount of the stablecoin to exchange
+    /// @param wad the amount of the stablecoin to exchange (in the stablecoin decimals)
     /// @param toDai if true, we are converting from stablecoin to dai, otherwise we are converting from dai to stablecoin
     /// @param gem the non-dai stablecoin address
-    function _daiRouter(LiquidityProvider lp, uint256 wad, bool toDai, address gem) internal returns (uint256) {
+    /// @return output the amount of stablecoin received (in the stablecoin decimals)
+    function _daiRouter(LiquidityProvider lp, uint256 wad, bool toDai, address gem) internal returns (uint256 output) {
         /// 1. route the stablecoin to / from dai using the appropriate router
         if (lp == LiquidityProvider.CURVE_FI_3POOL) {
             // if we are going to dai, move the stablecoin to this contract
@@ -284,17 +332,17 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
                 // we are going to dai, so we need to transfer the stablecoin to this contract
                 _move(ERC20(gem), msg.sender, address(this), wad);
             }
-            return _curveFi3PoolRouter(wad, toDai, gem);
+            output = _curveFi3PoolRouter(wad, toDai, gem);
         } else if (lp == LiquidityProvider.UNISWAP_V3) {
             /// @dev we make use of callbacks here to avoid having to transfer the stablecoin to this contract
-            return _uniswapV3Router(wad, toDai, gem);
+            output = _uniswapV3Router(wad, toDai, gem);
         } else if (lp == LiquidityProvider.DAI_PSM && gem == address(usdc)) {
             // if we are going to dai, move the stablecoin to this contract
             if (toDai) {
                 // we are going to dai, so we need to transfer the stablecoin to this contract
                 _move(ERC20(gem), msg.sender, address(this), wad);
             }
-            return _daiPsmRouter(wad, toDai);
+            output = _daiPsmRouter(wad, toDai);
         }
     }
 
