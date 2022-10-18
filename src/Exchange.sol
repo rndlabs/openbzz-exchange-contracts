@@ -394,10 +394,10 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
     /// @param _sc the stablecoin whose permit we are handling
     /// @param _pp the permit parameters
     /// @dev this function is used to handle the permit signatures for dai and usdc
-    function _permit(Stablecoin _sc, PermitParams calldata _pp) internal {
+    function _permit(Stablecoin _sc, bytes memory _pp) internal {
         /// @dev we can use the same permit params layout for dai and usdc
         (uint256 nonceOrValue, uint256 expiryOrDeadline, uint8 v, bytes32 r, bytes32 s) =
-            abi.decode(_pp.data, (uint256, uint256, uint8, bytes32, bytes32));
+            abi.decode(_pp, (uint256, uint256, uint8, bytes32, bytes32));
 
         if (_sc == Stablecoin.DAI) {
             /// @dev dai permit is not eip-2612.
