@@ -12,48 +12,43 @@ import "makerdao/dss/GemJoinAbstract.sol";
 import "univ3/interfaces/IUniswapV3Pool.sol";
 import "univ3/interfaces/callback/IUniswapV3SwapCallback.sol";
 
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/interfaces/IERC20.sol";
+
 import { I3PoolCurve } from "./interfaces/I3PoolCurve.sol";
 import { IBondingCurve } from "./interfaces/IBondingCurve.sol";
 import { IForeignBridge } from "./interfaces/IForeignBridge.sol";
 
 enum Stablecoin { DAI, USDC, USDT }
-enum LiquidityProvider { NONE, CURVE_FI_3POOL, UNISWAP_V3, DAI_PSM }
-enum BridgeOptions { NONE, TO_EOA, TO_CONTRACT }
-
-struct StablecoinParams {
-    Stablecoin stablecoin;
-    bytes data;
-}
-
-struct PermitParams {
-    bool isPermit;
-    bytes data;
-}
-
-struct BridgeParams {
-    // whether to use the bridge to send tokens to an EOA or a contract (or not at all)
-    BridgeOptions bridge;
-    // if bridging to an EOA, the address of the EOA to send tokens to
-    // if bridging to a contract, the address of the contract to send tokens to and the data to send
-    bytes data;
-}
+enum LiquidityProvider { NONE, DAI_PSM, CURVE_FI_3POOL, UNISWAP_V3 }
 
 struct BuyParams {
     // the amount of bzz to buy
-    uint128 bzzAmount;
-    // the minimum amount of bzz to receive
-    uint128 minBzzAmount;
-    // parameters for the stablecoin that we are buying with
+    uint256 bzzAmount;
+    // the maximum amount of stablecoin (in native stablecoin decimals) to pay for `bzzAmount`
+    uint256 maxStablecoinAmount;
+    // the stablecoin to use for payment
     Stablecoin inputCoin;
-    // the maximum amount of stablecoin to pay
-    uint240 maxStablecoinAmount;
+    // the liquidity provider to use for payment
+    LiquidityProvider lp;
     // options as a byte
     // bit 0: whether to use permit
     // bit 1: whether to use the bridge
     // therefore options = 1 means use permit, options = 2 means use bridge, options = 3 means use both
-    uint8 options;
+    uint256 options;
     // the data for the permit and/or bridge
     bytes data;
+}
+
+struct SellParams {
+    // the amount of bzz to sell
+    uint256 bzzAmount;
+    // the minimum amount of stablecoin to receive for `bzzAmount`
+    uint256 minStablecoinAmount;
+    // which stablecoin to sell to
+    Stablecoin outputCoin;
+    // the liquidity provider to use for payment
+    LiquidityProvider lp;
 }
 
 contract Exchange is Owned, IUniswapV3SwapCallback {
