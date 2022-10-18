@@ -341,7 +341,7 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
             !toDai,
             int256(wad), // amount of input token (dai, usdc/usdt)
             toDai ? MAX_SQRT_RATIO - 1 : MIN_SQRT_RATIO + 1,
-            toDai ? abi.encodePacked(msg.sender) : bytes("")
+            toDai ? abi.encode(msg.sender) : bytes("")
         );
 
         // c. return the amount of the destination coin received
