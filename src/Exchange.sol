@@ -135,7 +135,8 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         /// @notice pre-approve the curve.fi 3pool for unlimited approval of the exchange's dai, usdc and usdt
         dai.approve(address(curveFi3Pool), type(uint256).max);
         usdc.approve(address(curveFi3Pool), type(uint256).max);
-        usdt.approve(address(curveFi3Pool), type(uint256).max);
+        // have to use the safeApprove function because the usdt token has a non-standard approve function 🤮
+        SafeERC20.safeApprove(IERC20(address(usdt)), address(curveFi3Pool), type(uint256).max);
 
         /// @notice there is no need to pre-approve uniswap v3 pools as these transactions
         //          are done using callbacks
