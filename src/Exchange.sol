@@ -459,8 +459,6 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         } else if (_sc == Stablecoin.USDC) {
             /// @dev usdc permit is eip-2612.            
             usdc.permit(msg.sender, address(this), nonceOrValue, expiryOrDeadline, v, r, s);
-        } else {
-            revert();
         }
     }
 
