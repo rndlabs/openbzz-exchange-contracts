@@ -349,13 +349,16 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         } else if (lp == LiquidityProvider.UNISWAP_V3) {
             /// @dev we make use of callbacks here to avoid having to transfer the stablecoin to this contract
             output = _uniswapV3Router(wad, toDai, gem);
-        } else if (lp == LiquidityProvider.DAI_PSM && gem == address(usdc)) {
+        } else if (lp == LiquidityProvider.DAI_PSM) {
+            require(gem == address(usdc), "exchange/psm-usdc-only");
             // if we are going to dai, move the stablecoin to this contract
             if (toDai) {
                 // we are going to dai, so we need to transfer the stablecoin to this contract
                 _move(ERC20(gem), msg.sender, address(this), wad);
             }
             output = _daiPsmRouter(wad, toDai);
+        } else {
+            revert("exchange/invalid-lp");
         }
     }
 
