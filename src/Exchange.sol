@@ -12,9 +12,6 @@ import "makerdao/dss/GemJoinAbstract.sol";
 import "univ3/interfaces/IUniswapV3Pool.sol";
 import "univ3/interfaces/callback/IUniswapV3SwapCallback.sol";
 
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/interfaces/IERC20.sol";
-
 import { I3PoolCurve } from "./interfaces/I3PoolCurve.sol";
 import { IBondingCurve } from "./interfaces/IBondingCurve.sol";
 import { IForeignBridge } from "./interfaces/IForeignBridge.sol";
@@ -139,7 +136,7 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         dai.approve(address(curveFi3Pool), type(uint256).max);
         usdc.approve(address(curveFi3Pool), type(uint256).max);
         // have to use the safeApprove function because the usdt token has a non-standard approve function 🤮
-        SafeERC20.safeApprove(IERC20(address(usdt)), address(curveFi3Pool), type(uint256).max);
+        usdt.safeApprove(address(curveFi3Pool), type(uint256).max);
 
         /// @notice there is no need to pre-approve uniswap v3 pools as these transactions
         //          are done using callbacks

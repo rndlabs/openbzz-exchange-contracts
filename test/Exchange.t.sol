@@ -3,6 +3,7 @@ pragma solidity ^0.8.17;
 
 import "makerdao/dss/DaiAbstract.sol";
 import "solmate/tokens/ERC20.sol";
+import "solmate/utils/SafeTransferLib.sol";
 
 import {Test} from "../lib/forge-std/src/Test.sol";
 import {Exchange, BuyParams, SellParams, Stablecoin, LiquidityProvider} from "../src/Exchange.sol";
@@ -10,6 +11,8 @@ import {IForeignBridge} from "../src/interfaces/IForeignBridge.sol";
 import {IBondingCurve} from "../src/interfaces/IBondingCurve.sol";
 
 contract ExchangeTest is Test {
+    using SafeTransferLib for ERC20;
+
     struct TestAccount {
         address addr;
         uint256 key;
