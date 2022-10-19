@@ -298,15 +298,23 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         // 5. if output coin is not dai, then swap to output coin (moves to user)
         //    else if output coin is dai, then transfer dai to user
         if (uint8(Stablecoin.DAI) < uint8(_sellParams.outputCoin)) {
-            _daiRouter(
+            uint256 afterLp = _daiRouter(
                 _sellParams.lp,
                 (_sellParams.lp != LiquidityProvider.DAI_PSM ?  // if not using dai psm, we need 2bps slippage
-                    amount * 9998 / 10000 / TO_DAI :            // 2bps slippage
-                    amount / TO_DAI                             // otherwise 0bps slippage
+                    amount * 9998 / 10000 :            // 2bps slippage
+                    amount                             // otherwise 0bps slippage
                 ),
-                true,
+                false,
                 _sellParams.outputCoin == Stablecoin.USDC ? address(usdc) : address(usdt)
             );
+            // if the LP is DAI_PSM or CURVE_FI, then we need to transfer the output coin to the user
+            if (uint8(_sellParams.lp) < 3) {
+                _move(
+                    _sellParams.outputCoin == Stablecoin.USDC ? usdc : usdt,
+                    msg.sender,
+                    afterLp
+                );
+            }
         } else {
             _move(dai, address(this), msg.sender, amount);
         }
