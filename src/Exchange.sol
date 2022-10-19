@@ -12,12 +12,22 @@ import "makerdao/dss/GemJoinAbstract.sol";
 import "univ3/interfaces/IUniswapV3Pool.sol";
 import "univ3/interfaces/callback/IUniswapV3SwapCallback.sol";
 
-import { I3PoolCurve } from "./interfaces/I3PoolCurve.sol";
-import { IBondingCurve } from "./interfaces/IBondingCurve.sol";
-import { IForeignBridge } from "./interfaces/IForeignBridge.sol";
+import {I3PoolCurve} from "./interfaces/I3PoolCurve.sol";
+import {IBondingCurve} from "./interfaces/IBondingCurve.sol";
+import {IForeignBridge} from "./interfaces/IForeignBridge.sol";
 
-enum Stablecoin { DAI, USDC, USDT }
-enum LiquidityProvider { NONE, DAI_PSM, CURVE_FI_3POOL, UNISWAP_V3 }
+enum Stablecoin {
+    DAI,
+    USDC,
+    USDT
+}
+
+enum LiquidityProvider {
+    NONE,
+    DAI_PSM,
+    CURVE_FI_3POOL,
+    UNISWAP_V3
+}
 
 struct BuyParams {
     // the amount of bzz to buy
@@ -90,7 +100,6 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
     PsmAbstract public immutable psm;
 
     // --- state
-
     uint256 public fee;
 
     constructor(
@@ -140,7 +149,7 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
 
         /// @notice there is no need to pre-approve uniswap v3 pools as these transactions
         //          are done using callbacks
-        
+
         /// @notice pre-approve the bridge for unlimited spending approval of the exchange's bzz tokens
         /// @dev this may be a security risk if the bridge is hacked, and could subsequently drain
         ///      any fees that this contract may have accumulated, though this motivates the owners
@@ -183,7 +192,7 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
     /// The exchange allows for buying / selling BZZ from/to stablecoins
     ///
     /// BZZ market: Bonding Curve (BZZ <--> DAI)
-    /// Stablecoin markets: 
+    /// Stablecoin markets:
     /// a. Curve.fi 3pool (DAI <--> USDC/USDT)
     /// b. Uniswap V3 (DAI <--> USDC/USDT)
     /// c. DAI PSM (DAI <--> USDC)
@@ -193,19 +202,22 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
     /// @return totalCost in stablecoin of the transaction
     function buy(BuyParams calldata _buyParams) external returns (uint256 totalCost) {
         // 1. calculate the price to buy wad amount of bzz, then calculate fee
-        uint256 collateralCost = bc.buyPrice(_buyParams.bzzAmount);         // dai cost
+        uint256 collateralCost = bc.buyPrice(_buyParams.bzzAmount); // dai cost
         unchecked {
-            uint256 feeCost = collateralCost * fee / 10000;                 // dai fee
-            totalCost = collateralCost + feeCost;                           // dai total
+            uint256 feeCost = collateralCost * fee / 10000; // dai fee
+            totalCost = collateralCost + feeCost; // dai total
         }
 
         // 2. enforce slippage constraints
         /// @dev Allow for 2bps slippage for Uniswap V3 and Curve.fi
-        require(_buyParams.maxStablecoinAmount * (_buyParams.inputCoin == Stablecoin.DAI ? 1 : TO_DAI) > 
-            (uint8(_buyParams.lp) <= 1 ? // logic shortcut to check if lp is 0 or 1, ie. NONE or DAI_PSM
-                totalCost : 
-                totalCost * 10002 / 10000  // allow 2bps of slippage for Uniswap V3 and Curve.fi
-            ), "exchange/slippage"
+        require(
+            _buyParams.maxStablecoinAmount * (_buyParams.inputCoin == Stablecoin.DAI ? 1 : TO_DAI)
+                > (
+                    uint8(_buyParams.lp) <= 1 // logic shortcut to check if lp is 0 or 1, ie. NONE or DAI_PSM
+                        ? totalCost
+                        : totalCost * 10002 / 10000
+                ), // allow 2bps of slippage for Uniswap V3 and Curve.fi
+            "exchange/slippage"
         );
 
         bytes memory permitData;
@@ -232,10 +244,11 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         if (uint8(Stablecoin.DAI) < uint8(_buyParams.inputCoin)) {
             _daiRouter(
                 _buyParams.lp,
-                (_buyParams.lp != LiquidityProvider.DAI_PSM ?   // if not using dai psm, we need 2bps slippage
-                    totalCost * 10002 / 10000 / TO_DAI :        // 2bps slippage
-                    totalCost / TO_DAI                          // otherwise 0bps slippage
-                ),
+                (
+                    _buyParams.lp != LiquidityProvider.DAI_PSM // if not using dai psm, we need 2bps slippage
+                        ? totalCost * 10002 / 10000 / TO_DAI // 2bps slippage
+                        : totalCost / TO_DAI
+                ), // otherwise 0bps slippage
                 true,
                 _buyParams.inputCoin == Stablecoin.USDC ? address(usdc) : address(usdt)
             );
@@ -260,11 +273,7 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         //    callback data (allows for flexibility when sending to contracts on gnosis chain)
         if (bridgeData.length == 32) {
             // relay direct to a wallet
-            bridge.relayTokens(
-                address(bzz),
-                abi.decode(bridgeData, (address)),
-                _buyParams.bzzAmount
-            );
+            bridge.relayTokens(address(bzz), abi.decode(bridgeData, (address)), _buyParams.bzzAmount);
         } else {
             (address dest, bytes memory cd) = abi.decode(bridgeData, (address, bytes));
             bridge.relayTokensAndCall(address(bzz), dest, _buyParams.bzzAmount, cd);
@@ -276,17 +285,20 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
     /// @return amount in stablecoin of the transaction
     function sell(SellParams calldata _sellParams) external returns (uint256 amount) {
         // 1. calculate the reward for selling wad bzz and enforce slippage constraint
-        uint256 collateralReward = bc.sellReward(_sellParams.bzzAmount);        // dai reward
-        uint256 feeReward = collateralReward * fee / 10000;                     // dai fee
-        amount = collateralReward - feeReward;                                  // dai amount
+        uint256 collateralReward = bc.sellReward(_sellParams.bzzAmount); // dai reward
+        uint256 feeReward = collateralReward * fee / 10000; // dai fee
+        amount = collateralReward - feeReward; // dai amount
 
         // 2. enforce slippage constraints
         /// @dev Allow for 2bps slippage for Uniswap V3 and Curve.fi
-        require(_sellParams.minStablecoinAmount * (_sellParams.outputCoin == Stablecoin.DAI ? 1 : TO_DAI) < 
-            (uint8(_sellParams.lp) <= 1 ?   // logic shortcut to check if lp is 0 or 1, ie. NONE or DAI_PSM
-                amount : 
-                amount * 9998 / 10000       // allow 2bps of slippage for Uniswap V3 and Curve.fi
-            ), "exchange/slippage"
+        require(
+            _sellParams.minStablecoinAmount * (_sellParams.outputCoin == Stablecoin.DAI ? 1 : TO_DAI)
+                < (
+                    uint8(_sellParams.lp) <= 1 // logic shortcut to check if lp is 0 or 1, ie. NONE or DAI_PSM
+                        ? amount
+                        : amount * 9998 / 10000
+                ), // allow 2bps of slippage for Uniswap V3 and Curve.fi
+            "exchange/slippage"
         );
 
         // 3. transfer bzz from the user to this contract
@@ -300,25 +312,21 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         if (uint8(Stablecoin.DAI) < uint8(_sellParams.outputCoin)) {
             uint256 afterLp = _daiRouter(
                 _sellParams.lp,
-                (_sellParams.lp != LiquidityProvider.DAI_PSM ?  // if not using dai psm, we need 2bps slippage
-                    amount * 9998 / 10000 :            // 2bps slippage
-                    amount                             // otherwise 0bps slippage
-                ),
+                (
+                    _sellParams.lp != LiquidityProvider.DAI_PSM // if not using dai psm, we need 2bps slippage
+                        ? amount * 9998 / 10000 // 2bps slippage
+                        : amount
+                ), // otherwise 0bps slippage
                 false,
                 _sellParams.outputCoin == Stablecoin.USDC ? address(usdc) : address(usdt)
             );
             // if the LP is DAI_PSM or CURVE_FI, then we need to transfer the output coin to the user
             if (uint8(_sellParams.lp) < 3) {
-                _move(
-                    _sellParams.outputCoin == Stablecoin.USDC ? usdc : usdt,
-                    msg.sender,
-                    afterLp
-                );
+                _move(_sellParams.outputCoin == Stablecoin.USDC ? usdc : usdt, msg.sender, afterLp);
             }
         } else {
             _move(dai, address(this), msg.sender, amount);
         }
-
     }
 
     // --- helpers
@@ -457,7 +465,7 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
             /// @dev dai permit is not eip-2612.
             DaiAbstract(address(dai)).permit(msg.sender, address(this), nonceOrValue, expiryOrDeadline, true, v, r, s);
         } else if (_sc == Stablecoin.USDC) {
-            /// @dev usdc permit is eip-2612.            
+            /// @dev usdc permit is eip-2612.
             usdc.permit(msg.sender, address(this), nonceOrValue, expiryOrDeadline, v, r, s);
         }
     }
@@ -466,19 +474,15 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
 
     /// Uniswap V3 swap callback to transfer tokens.
     /// @param amount0Delta The amount of token0 that was sent (negative) or must be received
-    ///                     (positive) by the pool by the end of the swap. If positive, the 
+    ///                     (positive) by the pool by the end of the swap. If positive, the
     ///                     callback must send that amount of token0 to the pool.
-    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received 
-    ///                     (positive) by the pool by the end of the swap. If positive, the 
+    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received
+    ///                     (positive) by the pool by the end of the swap. If positive, the
     ///                     callback must send that amount of token1 to the pool.
     /// @param data Any data passed through by the caller via the IUniswapV3PoolActions#swap call.
     ///             In this implementation, assumes that the pool key and a minimum receive amount
     ///             are passed via `data` to save on external calls.
-    function uniswapV3SwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) external {
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
         /// @dev make sure we are actually being called by a canonical pool. This is safe as the pools are immutable.
         require(msg.sender == address(usdcV3Pool) || msg.sender == address(usdtV3Pool), "exchange/u3-invalid-pool");
 
