@@ -146,7 +146,7 @@ contract ExchangeTest is Test {
         if (options == 1) {
             permitData = cd;
         } else if (options == 3) {
-            (permitData, ) = abi.decode(cd, (bytes, bytes));
+            (permitData,) = abi.decode(cd, (bytes, bytes));
         }
 
         // test balance requirements
@@ -171,7 +171,7 @@ contract ExchangeTest is Test {
                 // test allowance requirements (only if no permit)
                 vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
                 exchange.buy(params);
-    
+
                 // give allowance to the exchange (if no permitData is specified)
                 ERC20(inputCoinAddr).safeApprove(address(exchange), type(uint256).max);
             } else {
@@ -272,7 +272,12 @@ contract ExchangeTest is Test {
                 // next test with permit and bridging to an EOA
                 helperBuy(Stablecoin(i), LiquidityProvider(j), 3, abi.encode(permitData, abi.encode(alice.addr)));
                 // next test with permit and bridging to a contract
-                helperBuy(Stablecoin(i), LiquidityProvider(j), 3, abi.encode(permitData, abi.encode(alice.addr, bytes("test"))));
+                helperBuy(
+                    Stablecoin(i),
+                    LiquidityProvider(j),
+                    3,
+                    abi.encode(permitData, abi.encode(alice.addr, bytes("test")))
+                );
             }
         }
     }
