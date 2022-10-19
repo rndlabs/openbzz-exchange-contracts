@@ -71,7 +71,7 @@ contract ExchangeTest is Test {
 
         // give alice 10000 eth
         vm.deal(address(alice.addr), 10000 ether);
-        deal(address(dai), address(exchange), 10000e18);
+        // deal(address(dai), address(exchange), 10000e18);
     }
 
     function testSetFee() public {
@@ -113,280 +113,168 @@ contract ExchangeTest is Test {
         payable(address(exchange)).send(1 ether);
     }
 
-    function testBuyNonPermitCurve3Pool() public {
+    function helperBuy(Stablecoin inputCoin, LiquidityProvider lp, uint256 options, bytes memory cd) internal {
+        // Snapshot the current state of the evm.
+        uint256 snapshotId = vm.snapshot();
+
         vm.startPrank(alice.addr);
 
-        // give alice 10000 USDT
-        deal(address(usdt), address(alice.addr), 10000e6);
-        usdt.safeApprove(address(exchange), type(uint256).max);
+        // give alice 10000 of the input coin
+        address inputCoinAddr;
+        if (inputCoin == Stablecoin.DAI) {
+            inputCoinAddr = address(dai);
+        } else if (inputCoin == Stablecoin.USDC) {
+            inputCoinAddr = address(usdc);
+        } else if (inputCoin == Stablecoin.USDT) {
+            inputCoinAddr = address(usdt);
+        }
+        uint256 inputCoinAmount = inputCoin != Stablecoin.DAI ? 10000e6 : 10000e18;
 
-        // test the buy with routing through curve3pool
+        // build the buy params
         BuyParams memory params = BuyParams({
             bzzAmount: 10 ether,
-            maxStablecoinAmount: 10000e6,
-            inputCoin: Stablecoin.USDT,
-            lp: LiquidityProvider.CURVE_FI_3POOL,
-            options: 0,
-            data: ""
+            maxStablecoinAmount: inputCoinAmount,
+            inputCoin: inputCoin,
+            lp: lp,
+            options: options,
+            data: cd
         });
 
-        exchange.buy(params);
-    }
+        bytes memory permitData;
 
-    function testBuyNonPermitUniswapV3Pool() public {
-        vm.startPrank(alice.addr);
-
-        // give alice 10000 USDC
-        deal(address(usdc), address(alice.addr), 10000e6);
-        usdc.approve(address(exchange), type(uint256).max);
-
-        // test the buy with routing through curve3pool
-        BuyParams memory params = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 10000e6 * 10e12,
-            inputCoin: Stablecoin.USDC,
-            lp: LiquidityProvider.UNISWAP_V3,
-            options: 0,
-            data: ""
-        });
-
-        exchange.buy(params);
-    }
-
-    function testBuyNonPermitDaiPSM() public {
-        vm.startPrank(alice.addr);
-
-        // give alice 10000 USDC
-        deal(address(usdc), address(alice.addr), 10000e6);
-        usdc.approve(address(exchange), type(uint256).max);
-
-        // test the buy with routing through dai psm
-        BuyParams memory params = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 10000e6 * 10e12,
-            inputCoin: Stablecoin.USDC,
-            lp: LiquidityProvider.DAI_PSM,
-            options: 0,
-            data: ""
-        });
-
-        exchange.buy(params);
-    }
-
-    function testBuyNonPermit() public {
-        vm.startPrank(alice.addr);
-
-        // buy parameters
-        BuyParams memory params = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.DAI,
-            lp: LiquidityProvider.NONE,
-            options: 0,
-            data: ""
-        });
+        // split out all the optional data
+        if (options == 1) {
+            permitData = cd;
+        } else if (options == 3) {
+            (permitData, ) = abi.decode(cd, (bytes, bytes));
+        }
 
         // test balance requirements
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
+        if (inputCoin == Stablecoin.USDT && permitData.length > 0) {
+            vm.expectRevert();
+            exchange.buy(params);
+        } else if (inputCoin == Stablecoin.USDT && lp == LiquidityProvider.DAI_PSM) {
+            vm.expectRevert(bytes("exchange/psm-usdc-only"));
+            exchange.buy(params);
+        } else if (inputCoin != Stablecoin.DAI && lp == LiquidityProvider.NONE) {
+            vm.expectRevert(bytes("exchange/invalid-lp"));
+            exchange.buy(params);
+        } else {
+            vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
 
-        exchange.buy(params);
+            exchange.buy(params);
 
-        deal(address(dai), address(alice.addr), 10000e18);
+            deal(address(inputCoinAddr), address(alice.addr), inputCoinAmount);
 
-        // test allowance requirements
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(params);
+            // allowance testing (permit and no permit)
+            if (permitData.length == 0) {
+                // test allowance requirements (only if no permit)
+                vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
+                exchange.buy(params);
+    
+                // give allowance to the exchange (if no permitData is specified)
+                ERC20(inputCoinAddr).safeApprove(address(exchange), type(uint256).max);
+            } else {
+                // test the transaction without a permit
+                BuyParams memory paramsNoPermit = BuyParams({
+                    bzzAmount: 10 ether,
+                    maxStablecoinAmount: inputCoinAmount,
+                    inputCoin: inputCoin,
+                    lp: lp,
+                    options: 1,
+                    data: bytes("rubbish permit")
+                });
+                vm.expectRevert(bytes(""));
+                exchange.buy(paramsNoPermit);
+            }
 
-        dai.approve(address(exchange), type(uint256).max);
+            // test the buy
+            uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
+            uint256 pre_exchange_balance = ERC20(inputCoinAddr).balanceOf(address(exchange));
 
-        // test the buy
-        uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
-        uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
+            exchange.buy(params);
 
-        exchange.buy(params);
+            /// @dev assert that alice gets the net amount and the exchange gets the fees
+            // assertEq(bzz.balanceOf(alice.addr), pre_alice_balance + net(10 ether));
+            assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
+        }
 
-        /// @dev assert that alice gets the net amount and the exchange gets the fees
-        // assertEq(bzz.balanceOf(alice.addr), pre_alice_balance + net(10 ether));
-        assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
+        vm.stopPrank();
+
+        // revert to the snapshot
+        vm.revertTo(snapshotId);
     }
 
-    function testBuyAndBridge() public {
-        vm.startPrank(alice.addr);
-
-        // buy parameters
-        BuyParams memory params = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.DAI,
-            lp: LiquidityProvider.NONE,
-            options: 2,
-            data: abi.encode(alice.addr)
-        });
-
-        deal(address(dai), address(alice.addr), 10000 ether);
-        dai.approve(address(exchange), type(uint256).max);
-
-        exchange.buy(params);
+    function testBuyNonPermitPermutations() public {
+        // iterate through stablecoins
+        for (uint256 i = 0; i < 3; i++) {
+            // iterate through liquidity providers except NONE
+            for (uint256 j = 0; j < 4; j++) {
+                // first test simple buying
+                helperBuy(Stablecoin(i), LiquidityProvider(j), 0, bytes(""));
+            }
+        }
     }
 
-    function testBuyAndBridgeToBatch() public {
-        vm.startPrank(alice.addr);
-
-        // buy parameters
-        BuyParams memory params = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.DAI,
-            lp: LiquidityProvider.NONE,
-            options: 2,
-            data: abi.encode(alice.addr, abi.encode(bytes32("test"), uint256(1)))
-        });
-
-        deal(address(dai), address(alice.addr), 10000 ether);
-        dai.approve(address(exchange), type(uint256).max);
-
-        exchange.buy(params);
+    function testBuyNonPermitBridgePermutations() public {
+        // iterate through stablecoins
+        for (uint256 i = 0; i < 3; i++) {
+            // iterate through liquidity providers
+            for (uint256 j = 0; j < 4; j++) {
+                // next test with just bridging (a. EOA only)
+                helperBuy(Stablecoin(i), LiquidityProvider(j), 2, abi.encode(alice.addr));
+                // next test with just bridging (to a destination contract)
+                bytes memory other = bytes("this is just some data");
+                helperBuy(Stablecoin(i), LiquidityProvider(j), 2, abi.encode(alice.addr, other));
+            }
+        }
     }
 
-    function testBuyAndBridgeToBatchWithPermit() public {
-        vm.startPrank(alice.addr);
+    function testBuyPermitPermutations() public {
+        // iterate through stablecoins
+        for (uint256 i = 0; i < 3; i++) {
+            // iterate through liquidity providers
+            for (uint256 j = 0; j < 4; j++) {
+                bytes memory permitData;
+                if (i == 0) {
+                    SigUtilsDAI.Permit memory permit = SigUtilsDAI.Permit({
+                        holder: alice.addr,
+                        spender: address(exchange),
+                        nonce: 0,
+                        expiry: type(uint256).max,
+                        allowed: true
+                    });
 
-        // buy parameters
-        BuyParams memory paramsSimple = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.USDC,
-            lp: LiquidityProvider.UNISWAP_V3,
-            options: 0,
-            data: ""
-        });
+                    bytes32 digest = sigUtilsDai.getTypedDataHash(permit);
 
-        // test balance requirements
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(paramsSimple);
+                    (uint8 v, bytes32 r, bytes32 s) = vm.sign(alice.key, digest);
 
-        // give alice 10000 USDC
-        deal(address(usdc), address(alice.addr), 10000e6);
+                    permitData = abi.encode(uint256(0), type(uint256).max, v, r, s);
+                } else if (i == 1) {
+                    SigUtilsEIP2612.Permit memory permit = SigUtilsEIP2612.Permit({
+                        owner: alice.addr,
+                        spender: address(exchange),
+                        value: type(uint256).max,
+                        nonce: 0,
+                        deadline: type(uint256).max
+                    });
 
-        // test allowance requirements
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(paramsSimple);
+                    bytes32 digest = sigUtilsUsdc.getTypedDataHash(permit);
 
-        uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
-        uint256 pre_exchange_balance = usdc.balanceOf(address(exchange));
+                    (uint8 v, bytes32 r, bytes32 s) = vm.sign(alice.key, digest);
+                    permitData = abi.encode(type(uint256).max, type(uint256).max, v, r, s);
+                } else if (i == 2) {
+                    permitData = abi.encode(string("this is random data"));
+                }
 
-        SigUtilsEIP2612.Permit memory permit = SigUtilsEIP2612.Permit({
-            owner: alice.addr,
-            spender: address(exchange),
-            value: type(uint256).max,
-            nonce: 0,
-            deadline: type(uint256).max
-        });
-
-        bytes32 digest = sigUtilsUsdc.getTypedDataHash(permit);
-
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alice.key, digest);
-
-        BuyParams memory paramsInvalidPermit = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.USDC,
-            lp: LiquidityProvider.UNISWAP_V3,
-            options: 3,
-            data: abi.encode(
-                abi.encode(type(uint256).max, type(uint256).max, v, s, r),
-                abi.encode(alice.addr, abi.encode(bytes32("test"), uint256(1)))
-                )
-        });
-
-        vm.expectRevert(bytes("ECRecover: invalid signature 's' value"));
-        exchange.buy(paramsInvalidPermit);
-
-        BuyParams memory paramsValidPermit = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.USDC,
-            lp: LiquidityProvider.UNISWAP_V3,
-            options: 3,
-            data: abi.encode(
-                abi.encode(type(uint256).max, type(uint256).max, v, r, s),
-                abi.encode(alice.addr, abi.encode(bytes32("test"), uint256(1)))
-                )
-        });
-
-        exchange.buy(paramsValidPermit);
-
-        // assertEq(usdc.allowance(alice.addr, address(exchange)), type(uint256).max);
-        assertEq(usdc.nonces(alice.addr), 1);
-    }
-
-    function testBuyPermit() public {
-        vm.startPrank(alice.addr);
-
-        // buy parameters
-        BuyParams memory paramsSimple = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.DAI,
-            lp: LiquidityProvider.NONE,
-            options: 0,
-            data: ""
-        });
-
-        // test balance requirements
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(paramsSimple);
-
-        deal(address(dai), address(alice.addr), 10000e18);
-
-        // test allowance requirements
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.buy(paramsSimple);
-
-        uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
-        uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
-
-        SigUtilsDAI.Permit memory permit = SigUtilsDAI.Permit({
-            holder: alice.addr,
-            spender: address(exchange),
-            nonce: 0,
-            expiry: type(uint256).max,
-            allowed: true
-        });
-
-        bytes32 digest = sigUtilsDai.getTypedDataHash(permit);
-
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alice.key, digest);
-
-        BuyParams memory paramsInvalidPermit = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.DAI,
-            lp: LiquidityProvider.NONE,
-            options: 1,
-            data: abi.encode(uint256(0), type(uint256).max, v, s, r)
-        });
-
-        vm.expectRevert(bytes("Dai/invalid-permit"));
-        exchange.buy(paramsInvalidPermit);
-
-        BuyParams memory paramsValidPermit = BuyParams({
-            bzzAmount: 10 ether,
-            maxStablecoinAmount: 1000 ether,
-            inputCoin: Stablecoin.DAI,
-            lp: LiquidityProvider.NONE,
-            options: 1,
-            data: abi.encode(uint256(0), type(uint256).max, v, r, s)
-        });
-
-        exchange.buy(paramsValidPermit);
-
-        assertEq(dai.allowance(alice.addr, address(exchange)), type(uint256).max);
-        assertEq(DaiAbstract(address(dai)).nonces(alice.addr), 1);
-
-        /// @dev assert that alice gets the net amount and the exchange gets the fees
-        // assertEq(bzz.balanceOf(alice.addr), pre_alice_balance + net(10 ether));
-        assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
+                // first test with just permit
+                helperBuy(Stablecoin(i), LiquidityProvider(j), 1, permitData);
+                // next test with permit and bridging to an EOA
+                helperBuy(Stablecoin(i), LiquidityProvider(j), 3, abi.encode(permitData, abi.encode(alice.addr)));
+                // next test with permit and bridging to a contract
+                helperBuy(Stablecoin(i), LiquidityProvider(j), 3, abi.encode(permitData, abi.encode(alice.addr, bytes("test"))));
+            }
+        }
     }
 
     function testSell() public {
