@@ -411,11 +411,12 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         if (toDai) {
             // usdc --> dai
             psm.sellGem(address(this), wad);
+            return wad;
         } else {
             // dai --> usdc
-            psm.buyGem(address(this), wad);
+            psm.buyGem(address(this), wad / TO_DAI);
+            return wad / TO_DAI;
         }
-        return wad;
     }
 
     /// Move tokens from an address to another
