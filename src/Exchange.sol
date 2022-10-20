@@ -467,7 +467,7 @@ contract Exchange is Owned, IUniswapV3SwapCallback {
         if (_sc == Stablecoin.DAI) {
             /// @dev dai permit is not eip-2612.
             DaiAbstract(address(dai)).permit(msg.sender, address(this), nonceOrValue, expiryOrDeadline, true, v, r, s);
-        } else if (_sc == Stablecoin.USDC) {
+        } else {
             /// @dev usdc permit is eip-2612.
             usdc.permit(msg.sender, address(this), nonceOrValue, expiryOrDeadline, v, r, s);
         }
