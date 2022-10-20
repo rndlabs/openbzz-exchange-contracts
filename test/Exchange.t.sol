@@ -10,6 +10,9 @@ import {Exchange, BuyParams, SellParams, Stablecoin, LiquidityProvider} from "..
 import {IForeignBridge} from "../src/interfaces/IForeignBridge.sol";
 import {IBondingCurve} from "../src/interfaces/IBondingCurve.sol";
 
+uint256 constant BZZ_AMOUNT = 1_000e16; // 1000 BZZ
+uint256 constant FEE_BPS = 100;
+
 contract ExchangeTest is Test {
     using SafeTransferLib for ERC20;
 
@@ -24,6 +27,7 @@ contract ExchangeTest is Test {
 
     // --- constants
     TestAccount alice;
+    TestAccount bob;
     TestAccount owner;
 
     // --- main contracts
@@ -40,6 +44,8 @@ contract ExchangeTest is Test {
         // setup test accounts
         (address alice_, uint256 key) = makeAddrAndKey("alice");
         alice = TestAccount(alice_, key);
+        (address bob_, uint256 bobkey) = makeAddrAndKey("bob");
+        bob = TestAccount(bob_, bobkey);
         (address owner_, uint256 key_) = makeAddrAndKey("owner");
         owner = TestAccount(owner_, key_);
 
@@ -52,7 +58,7 @@ contract ExchangeTest is Test {
             0x48DA0965ab2d2cbf1C17C09cFB5Cbe67Ad5B1406, // lp uni3 dai usdt
             0x89B78CfA322F6C5dE0aBcEecab66Aee45393cC5A, // lp dai psm
             0x88ad09518695c6c3712AC10a214bE5109a655671, // bridge
-            100 // max fee
+            FEE_BPS // max fee
         );
 
         // setup the bonding curve and bridge
@@ -73,6 +79,8 @@ contract ExchangeTest is Test {
         vm.deal(address(alice.addr), 10000 ether);
         // deal(address(dai), address(exchange), 10000e18);
     }
+
+    // --- owner function tests (all must test auth)
 
     function testSetFee() public {
         vm.prank(alice.addr);
@@ -107,11 +115,118 @@ contract ExchangeTest is Test {
         assertEq(dai.balanceOf(address(exchange)), 0);
     }
 
+    // --- save users from accidentally sending eth to the exchange
+
     function testRejectEth() public {
         vm.prank(alice.addr);
         vm.expectRevert();
         payable(address(exchange)).send(1 ether);
     }
+
+    // --- protect uniswap callback to avoid abuse (only allow authorized pools)
+
+    function testUniswapCallback() public {
+        vm.startPrank(alice.addr);
+        vm.expectRevert(bytes("exchange/u3-invalid-pool"));
+        exchange.uniswapV3SwapCallback(0, 0, "");
+    }
+
+    // --- slippage tests
+
+    function testSlippageBuy() public {
+        BuyParams memory bobParams = BuyParams({
+            bzzAmount: 200_000e16,
+            maxStablecoinAmount: 500_000e18,
+            inputCoin: Stablecoin.DAI,
+            lp: LiquidityProvider.NONE,
+            options: 0,
+            data: ""
+        });
+        
+        BuyParams memory aliceParams = BuyParams({
+            bzzAmount: 19_000e16,
+            maxStablecoinAmount: 10_000e18,
+            inputCoin: Stablecoin.DAI,
+            lp: LiquidityProvider.NONE,
+            options: 0,
+            data: ""
+        });
+
+        // alice and bob approve the exchange for their dai tokens
+        vm.prank(alice.addr);
+        dai.approve(address(exchange), type(uint256).max);
+        vm.prank(bob.addr);
+        dai.approve(address(exchange), type(uint256).max);
+
+        // give alice and bob a million dai
+        deal(address(dai), address(alice.addr), 1_000_000e18);
+        deal(address(dai), address(bob.addr), 1_000_000e18);
+
+        uint256 snapshotId = vm.snapshot();
+
+        // make sure that alice can normally buy (in case of change of rate from when the test was written)
+        vm.prank(alice.addr);
+        exchange.buy(aliceParams);
+
+        // revert to previous snapshot
+        vm.revertTo(snapshotId);
+
+        // bob buys to sandwich alice
+        vm.prank(bob.addr);
+        exchange.buy(bobParams);
+
+        // alice buys
+        vm.prank(alice.addr);
+        vm.expectRevert(bytes("exchange/slippage"));
+        exchange.buy(aliceParams);
+    }
+
+    function testSlippageSell() public {
+        
+        SellParams memory bobParams = SellParams({
+            bzzAmount: 200_000e16,
+            minStablecoinAmount: 1e18,
+            outputCoin: Stablecoin.DAI,
+            lp: LiquidityProvider.NONE
+        });
+        
+        SellParams memory aliceParams = SellParams({
+            bzzAmount: 19_000e16,
+            minStablecoinAmount: 9_000e18,
+            outputCoin: Stablecoin.DAI,
+            lp: LiquidityProvider.NONE
+        });
+
+        // alice and bob approve the exchange for their bzz tokens
+        vm.prank(alice.addr);
+        bzz.approve(address(exchange), type(uint256).max);
+        vm.prank(bob.addr);
+        bzz.approve(address(exchange), type(uint256).max);
+
+        // give alice and bob a million bzz
+        deal(address(bzz), address(alice.addr), 1_000_000e16);
+        deal(address(bzz), address(bob.addr), 1_000_000e16);
+
+        uint256 snapshotId = vm.snapshot();
+
+        // make sure that alice can normally sell (in case of change of rate from when the test was written)
+        vm.prank(alice.addr);
+        exchange.sell(aliceParams);
+
+        // revert to previous snapshot
+        vm.revertTo(snapshotId);
+
+        // bob sells to sandwich alice
+        vm.prank(bob.addr);
+        exchange.sell(bobParams);
+
+        // alice sells
+        vm.prank(alice.addr);
+        vm.expectRevert(bytes("exchange/slippage"));
+        exchange.sell(aliceParams);
+    }
+
+    // --- buying tests
 
     function helperBuy(Stablecoin inputCoin, LiquidityProvider lp, uint256 options, bytes memory cd) internal {
         // Snapshot the current state of the evm.
@@ -130,9 +245,17 @@ contract ExchangeTest is Test {
         }
         uint256 inputCoinAmount = inputCoin != Stablecoin.DAI ? 10000e6 : 10000e18;
 
+        // calculate the fee amount
+        uint256 feeAmount = bc.buyPrice(BZZ_AMOUNT) * FEE_BPS / 10000;
+        uint256 feeAmountDelta = feeAmount * 10002 / 10000;
+
+        // calculate the maximum amount of the stablecoin that should be taken
+        uint256 maxInputCoinAmount = (bc.buyPrice(BZZ_AMOUNT) * 10002 / 10000 / (inputCoin != Stablecoin.DAI ? 1e12 : 1)) 
+            + feeAmount;
+
         // build the buy params
         BuyParams memory params = BuyParams({
-            bzzAmount: 10 ether,
+            bzzAmount: BZZ_AMOUNT,
             maxStablecoinAmount: inputCoinAmount,
             inputCoin: inputCoin,
             lp: lp,
@@ -177,7 +300,7 @@ contract ExchangeTest is Test {
             } else {
                 // test the transaction without a permit
                 BuyParams memory paramsNoPermit = BuyParams({
-                    bzzAmount: 10 ether,
+                    bzzAmount: BZZ_AMOUNT,
                     maxStablecoinAmount: inputCoinAmount,
                     inputCoin: inputCoin,
                     lp: lp,
@@ -189,14 +312,32 @@ contract ExchangeTest is Test {
             }
 
             // test the buy
-            uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
-            uint256 pre_exchange_balance = ERC20(inputCoinAddr).balanceOf(address(exchange));
+            address destAddress = (options < 2 ? address(alice.addr) : address(bridge));
+            uint256 pre_dest_balance = bzz.balanceOf(destAddress);
+            uint256 exchange_balance_dai = dai.balanceOf(address(exchange));
+            uint256 pre_alice_balance_sc = ERC20(inputCoinAddr).balanceOf(address(alice.addr));
 
             exchange.buy(params);
 
-            /// @dev assert that alice gets the net amount and the exchange gets the fees
-            // assertEq(bzz.balanceOf(alice.addr), pre_alice_balance + net(10 ether));
-            assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
+            // make sure that the exchange retains the fee
+            assertApproxEqAbs(
+                dai.balanceOf(address(exchange)) - exchange_balance_dai,
+                feeAmount,
+                feeAmountDelta
+            );
+
+            // make sure that the user / bridge received the correct amount of bzz
+            assertEq(bzz.balanceOf(destAddress), pre_dest_balance + BZZ_AMOUNT);
+
+            // make sure that the exchange never receives any usdt or usdc
+            assertEq(usdt.balanceOf(address(exchange)), 0);
+            assertEq(usdc.balanceOf(address(exchange)), 0);
+
+            // make sure that the cost is less than the max
+            assertLe(
+                pre_alice_balance_sc - ERC20(inputCoinAddr).balanceOf(address(alice.addr)),
+                maxInputCoinAmount
+            );
         }
 
         vm.stopPrank();
@@ -282,121 +423,101 @@ contract ExchangeTest is Test {
         }
     }
 
+    // --- selling tests
+
+    function helperSell(Stablecoin outputCoin, LiquidityProvider lp) internal {
+        // take a snapshot
+        uint256 snapshotId = vm.snapshot();
+
+        // calculate the fee amount
+        uint256 feeAmount = bc.sellReward(BZZ_AMOUNT) * FEE_BPS / 10000;
+        uint256 feeAmountDelta = feeAmount * 10002 / 10000;
+
+        // calculate the minimum amount of output coin that the user should receive
+        uint256 minOutputCoinAmount = (bc.sellReward(BZZ_AMOUNT) - feeAmount) * 9998 / 10000 / (outputCoin != Stablecoin.DAI ? 10e12 : 1);
+
+        vm.startPrank(alice.addr);
+
+        // configure the output parameters
+        address outputCoinAddr;
+        if (outputCoin == Stablecoin.DAI) {
+            outputCoinAddr = address(dai);
+        } else if (outputCoin == Stablecoin.USDC) {
+            outputCoinAddr = address(usdc);
+        } else if (outputCoin == Stablecoin.USDT) {
+            outputCoinAddr = address(usdt);
+        }
+        uint256 outputCoinAmount = outputCoin != Stablecoin.DAI ? 450e6 : 450e18;
+
+        // set up the params
+        SellParams memory params = SellParams({
+            bzzAmount: BZZ_AMOUNT,
+            minStablecoinAmount: outputCoinAmount,
+            outputCoin: outputCoin,
+            lp: lp
+        });
+
+        // test balance requirements
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
+        exchange.sell(params);
+
+        // give alice some bzz
+        deal(address(bzz), address(alice.addr), BZZ_AMOUNT);
+
+        // should fail because no allowance set for the exchange
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
+        exchange.sell(params);
+
+        // give allowance to the exchange (if no permitData is specified)
+        bzz.safeApprove(address(exchange), type(uint256).max);
+
+        if (outputCoin == Stablecoin.USDT && lp == LiquidityProvider.DAI_PSM) {
+            vm.expectRevert(bytes("exchange/psm-usdc-only"));
+            exchange.sell(params);
+        } else if (outputCoin != Stablecoin.DAI && lp == LiquidityProvider.NONE) {
+            vm.expectRevert(bytes("exchange/invalid-lp"));
+            exchange.sell(params);
+        } else {
+            // test the sell
+            uint256 pre_alice_balance = bzz.balanceOf(alice.addr);
+            uint256 pre_alice_balance_sc = ERC20(outputCoinAddr).balanceOf(alice.addr);
+            uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
+
+            exchange.sell(params);
+
+            // make sure that the exchange has received the fee
+            assertApproxEqAbs(
+                dai.balanceOf(address(exchange)), 
+                pre_exchange_balance + feeAmount,
+                feeAmountDelta
+            );
+
+            // alice's bzz balance should reduce by the traded amount
+            assertEq(bzz.balanceOf(alice.addr), pre_alice_balance - BZZ_AMOUNT);
+
+            // alice should have received a minimum
+            assertGe(ERC20(outputCoinAddr).balanceOf(alice.addr), pre_alice_balance_sc + minOutputCoinAmount);
+        }
+
+        // make sure that the exchange never receives any usdt or usdc
+        assertEq(usdt.balanceOf(address(exchange)), 0);
+        assertEq(usdc.balanceOf(address(exchange)), 0);
+
+        vm.stopPrank();
+
+        // revert to the snapshot
+        vm.revertTo(snapshotId);
+    }
+
     function testSell() public {
-        SellParams memory params = SellParams({
-            bzzAmount: 1_000e16,
-            minStablecoinAmount: 450e18,
-            outputCoin: Stablecoin.DAI,
-            lp: LiquidityProvider.NONE
-        });
-
-        // test approvals and balance checking
-        vm.startPrank(alice.addr);
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.sell(params);
-
-        deal(address(bzz), address(alice.addr), 1000 ether);
-        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
-        exchange.sell(params);
-
-        bzz.approve(address(exchange), type(uint256).max);
-
-        uint256 pre_alice_balance_dai = dai.balanceOf(alice.addr);
-        uint256 pre_alice_balance_bzz = bzz.balanceOf(alice.addr);
-        uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
-
-        exchange.sell(params);
-
-        /// @dev assert that alice gets the net amount and the exchange gets the fees
-        assertGt(dai.balanceOf(alice.addr), pre_alice_balance_dai);
-        assertLt(bzz.balanceOf(alice.addr), pre_alice_balance_bzz);
-        assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
-    }
-
-    function testSellCurveLPUsdt() public {
-        SellParams memory params = SellParams({
-            bzzAmount: 1_000e16,
-            minStablecoinAmount: 450e6,
-            outputCoin: Stablecoin.USDT,
-            lp: LiquidityProvider.CURVE_FI_3POOL
-        });
-
-        vm.startPrank(alice.addr);
-        deal(address(bzz), address(alice.addr), 1000 ether);
-        bzz.approve(address(exchange), type(uint256).max);
-
-        uint256 pre_alice_balance_usdt = usdt.balanceOf(alice.addr);
-        uint256 pre_alice_balance_bzz = bzz.balanceOf(alice.addr);
-        uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
-
-        exchange.sell(params);
-
-        /// @dev assert that alice gets the net amount and the exchange gets the fees
-        assertGt(usdt.balanceOf(alice.addr), pre_alice_balance_usdt);
-        assertLt(bzz.balanceOf(alice.addr), pre_alice_balance_bzz);
-        assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
-    }
-
-    function testSellUniswapUsdc() public {
-        SellParams memory params = SellParams({
-            bzzAmount: 1_000e16,
-            minStablecoinAmount: 450e6,
-            outputCoin: Stablecoin.USDC,
-            lp: LiquidityProvider.UNISWAP_V3
-        });
-
-        vm.startPrank(alice.addr);
-        deal(address(bzz), address(alice.addr), 1000 ether);
-        bzz.approve(address(exchange), type(uint256).max);
-
-        uint256 pre_alice_balance_usdc = usdc.balanceOf(alice.addr);
-        uint256 pre_alice_balance_bzz = bzz.balanceOf(alice.addr);
-        uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
-
-        exchange.sell(params);
-
-        /// @dev assert that alice gets the net amount and the exchange gets the fees
-        assertGt(usdc.balanceOf(alice.addr), pre_alice_balance_usdc);
-        assertLt(bzz.balanceOf(alice.addr), pre_alice_balance_bzz);
-        assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
-    }
-
-    function testSellDaiPSMUsdc() public {
-        SellParams memory params = SellParams({
-            bzzAmount: 1_000e16,
-            minStablecoinAmount: 450e6,
-            outputCoin: Stablecoin.USDC,
-            lp: LiquidityProvider.DAI_PSM
-        });
-
-        vm.startPrank(alice.addr);
-        deal(address(bzz), address(alice.addr), 1000 ether);
-        bzz.approve(address(exchange), type(uint256).max);
-
-        uint256 pre_alice_balance_usdc = usdc.balanceOf(alice.addr);
-        uint256 pre_alice_balance_bzz = bzz.balanceOf(alice.addr);
-        uint256 pre_exchange_balance = dai.balanceOf(address(exchange));
-
-        exchange.sell(params);
-
-        /// @dev assert that alice gets the net amount and the exchange gets the fees
-        assertGt(usdc.balanceOf(alice.addr), pre_alice_balance_usdc);
-        assertLt(bzz.balanceOf(alice.addr), pre_alice_balance_bzz);
-        assertGt(dai.balanceOf(address(exchange)), pre_exchange_balance);
-    }
-
-    function testUniswapCallback() public {
-        vm.startPrank(alice.addr);
-        vm.expectRevert(bytes("exchange/u3-invalid-pool"));
-        exchange.uniswapV3SwapCallback(0, 0, "");
-    }
-
-    function net(uint256 gross) internal view returns (uint256) {
-        return (10000 - exchange.fee()) * gross / 10000;
-    }
-
-    function fee(uint256 gross) internal view returns (uint256) {
-        return exchange.fee() * gross / 10000;
+        // iterate through stablecoins
+        for (uint256 i = 0; i < 3; i++) {
+            // iterate through liquidity providers except NONE
+            for (uint256 j = 0; j < 4; j++) {
+                // test simple selling
+                helperSell(Stablecoin(i), LiquidityProvider(j));
+            }
+        }
     }
 }
 
