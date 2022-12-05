@@ -49,8 +49,8 @@ Swap is deployed on the following networks:
 
 | Network | Name | Contract |
 | ------- | ---- | -------- |
-| Mainnet | Exchange | [0xEd469d6aa0658b71B9dE75c2fe401924FCf0534d](https://etherscan.io/address/0xEd469d6aa0658b71B9dE75c2fe401924FCf0534d) |
-| Gnosis  | BzzCrossChainRouter | [0x17491dc69269c8cd8aB84FE647fc1E7A817504eE](https://blockscout.com/xdai/mainnet/address/0x17491dc69269c8cd8aB84FE647fc1E7A817504eE)| 
+| Mainnet | Exchange | [0x69defd0bdcdca696042ed75b00c10276c6d32a33](https://etherscan.io/address/0x69defd0bdcdca696042ed75b00c10276c6d32a33) |
+| Gnosis  | BzzRouter | [0xEd469d6aa0658b71B9dE75c2fe401924FCf0534d](https://blockscout.com/xdai/mainnet/address/0xEd469d6aa0658b71B9dE75c2fe401924FCf0534d)| 
 
 ## Overview
 
@@ -89,9 +89,9 @@ Depending on the `bridge_cd` parameter passed to the `buy` function, a user may:
 1. Purchase BZZ tokens and send them directly to an address on Gnosis Chain.
 2. Purchase BZZ tokens, send them to Gnosis Chain and directly top-up a stamp.
 
-### BZZ Cross Chain Router
+### BZZ Router
 
-`BzzCrossChainRouter` is a small utility contract that resides on Gnosis Chain and is responsible for redirecting `BZZ`. This router will:
+`BzzRouter` is a small utility contract that resides on Gnosis Chain and is responsible for redirecting `BZZ`. This router will:
 
 1. Redirect `BZZ` that has been bridged, using the `onTokenBridged` callback from `HomeBridge`.
 2. Redirect `BZZ` that has been transferred, using the `onTokenTransfer` callback for `ERC677` transfers.
